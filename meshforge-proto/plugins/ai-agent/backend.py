@@ -174,6 +174,131 @@ def _parse_anthropic(data: dict) -> dict:
     return {"text": "\n".join(text), "tool_calls": calls}
 
 
+def extract_json(text: str) -> dict | None:
+    raw = (text or "").strip()
+    if raw.startswith("```"):
+        raw = raw.strip("`")
+        if raw.lower().startswith("json"):
+            raw = raw[4:]
+        raw = raw.strip()
+    start = raw.find("{")
+    end = raw.rfind("}")
+    if start < 0 or end <= start:
+        return None
+    try:
+        data = json.loads(raw[start:end + 1])
+    except json.JSONDecodeError:
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def _scrub_obj(value, key: str):
+    if isinstance(value, str):
+        return value.replace(key, "") if key else value
+    if isinstance(value, list):
+        return [_scrub_obj(item, key) for item in value]
+    if isinstance(value, dict):
+        return {str(k): _scrub_obj(v, key) for k, v in value.items()}
+    return value
+
+
+_BANNED = (
+    (r"void\s+main\s*\(", "Do not declare main."),
+    (r"#\s*version\b", "Do not set a GLSL version."),
+    (r"#\s*include\b", "Includes are not allowed."),
+    (r"#\s*extension\b", "Extensions are not allowed."),
+    (r"\b(eval|Function|document|window)\b", "JavaScript is not allowed."),
+    (r"=>", "JavaScript is not allowed."),
+)
+
+
+def check_material(spec: dict) -> list[str]:
+    import re
+    errors = []
+    if not isinstance(spec, dict):
+        return ["The material spec has to be an object."]
+    glsl = spec.get("glsl")
+    if not isinstance(glsl, str) or not glsl.strip():
+        errors.append("The GLSL snippet is empty.")
+    else:
+        for pattern, message in _BANNED:
+            if re.search(pattern, glsl):
+                errors.append(message)
+    params = spec.get("params") if isinstance(spec.get("params"), list) else None
+    if params is None:
+        errors.append("params has to be a list.")
+    else:
+        allowed = {"float", "int", "bool", "color", "vec2", "vec3", "texture"}
+        for param in params:
+            if not isinstance(param, dict) or param.get("type") not in allowed:
+                errors.append("A parameter has an unknown type.")
+                break
+    return errors
+
+
+def _data_url(value: str) -> tuple[str, str] | None:
+    if not isinstance(value, str) or not value.startswith("data:image/") or ";base64," not in value:
+        return None
+    header, data = value.split(";base64,", 1)
+    mime = header[5:]
+    if mime not in {"image/png", "image/jpeg", "image/webp"} or len(data) > 1_800_000:
+        return None
+    return mime, data
+
+
+def material_user(provider: str, brief: str, images: list, previous) -> str | list:
+    text = (
+        "PROGRAMMABLE_MATERIAL\n"
+        "Return one JSON object and nothing else. No markdown. No JavaScript.\n"
+        "Keys: name, pbr {color, roughness, metalness, emissive, emissiveIntensity, opacity}, "
+        "chibili {bands, shade, rim, soft}, params [{name, type, min, max, default, label}], "
+        "states {name: {param: value}}, glsl.\n"
+        "glsl is the body inside main. Assign mfAlbedo, mfRough, mfMetal, mfEmissive, and mfAlpha. "
+        "Read uTime, mfUV, vN, vW, cameraPosition, and uP_<paramName>. Helpers: mfNoise(vec2), mfHash(vec2). "
+        "Do not declare main, uniforms, or includes.\n"
+        "Brief:\n" + brief[:4000]
+    )
+    if previous:
+        text += "\nIterate from this current spec:\n" + json.dumps(previous)[:4000]
+    packed = []
+    for image in images[:4] if isinstance(images, list) else []:
+        raw = image.get("data") if isinstance(image, dict) else image
+        parsed = _data_url(raw)
+        if parsed:
+            packed.append(parsed)
+    if not packed:
+        return text
+    if provider == "anthropic":
+        blocks = [{"type": "text", "text": text}]
+        for mime, data in packed:
+            blocks.append({"type": "image", "source": {"type": "base64", "media_type": mime, "data": data}})
+        return blocks
+    parts = [{"type": "text", "text": text}]
+    for mime, data in packed:
+        parts.append({"type": "image_url", "image_url": {"url": f"data:{mime};base64,{data}"}})
+    return parts
+
+
+def complete_text(provider: str, key: str, base: str, model: str, content) -> dict:
+    headers = _auth_headers(provider, key)
+    if provider == "anthropic":
+        url = base.rstrip("/") + ("/messages" if base.rstrip("/").endswith("/v1") else "/v1/messages")
+        body = {"model": model, "max_tokens": 1800, "messages": [{"role": "user", "content": content}]}
+        status, raw = _http("POST", url, headers, body, timeout=40)
+        parsed = _parse_anthropic(_json_body(raw))
+    else:
+        url = base.rstrip("/") + "/chat/completions"
+        body = {"model": model, "messages": [{"role": "user", "content": content}]}
+        status, raw = _http("POST", url, headers, body, timeout=40)
+        parsed = _parse_openai(_json_body(raw))
+    if status in (401, 403):
+        raise PermissionError("invalid")
+    if status >= 400:
+        raise ConnectionError("network")
+    parsed["text"] = _scrub(parsed.get("text") or "", key)
+    return parsed
+
+
 def complete(provider: str, key: str, base: str, model: str, messages: list, tools: list) -> dict:
     headers = _auth_headers(provider, key)
     if provider == "anthropic":
@@ -308,3 +433,31 @@ def views(request: Request, body: dict = Body(...)):
     if len(images) < 4:
         return {"ok": False, "status": "network", "message": "The view step did not return four images", "spends": True, "images": images}
     return {"ok": True, "status": "connected", "images": images, "spends": True, "message": "Four views ready. This step made four paid Gemini image calls."}
+
+
+@router.post("/material")
+def material(request: Request, body: dict = Body(...)):
+    """Ask the connected provider for one programmable-material spec. The key is not stored."""
+    key = _key(request, "Provider")
+    provider = str(body.get("provider") or "")
+    if not key:
+        return {"ok": False, "status": "invalid", "message": "No AI provider is connected. Open the Agent tab and connect a provider. You can still edit the GLSL and the parameters by hand."}
+    try:
+        base = resolve_base(provider, body.get("base"))
+        model = str(body.get("model") or "") or ((_SUGGESTED.get(provider) or ["custom"])[0])
+        content = material_user(provider, str(body.get("brief") or ""), list(body.get("images") or []), body.get("previous"))
+        result = complete_text(provider, key, base, model, content)
+    except PermissionError:
+        return {"ok": False, "status": "invalid", "message": "Invalid key"}
+    except ValueError as exc:
+        return {"ok": False, "status": "invalid", "message": _scrub(str(exc), key)}
+    except Exception:
+        return {"ok": False, "status": "network", "message": "Network error"}
+    spec = extract_json(result.get("text") or "")
+    if not spec:
+        return {"ok": False, "message": "The model did not return a material spec."}
+    spec = _scrub_obj(spec, key)
+    errors = check_material(spec)
+    if errors:
+        return {"ok": False, "message": errors[0], "errors": errors}
+    return {"ok": True, "spec": spec}

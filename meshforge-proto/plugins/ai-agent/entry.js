@@ -178,6 +178,13 @@ export async function activate(mf) {
   }
   state.messages = [{ role: 'system', content: 'You edit a 3D level in MeshForge. Use only the provided tools. Say when a step spends API credit. Do not invent tools.' }];
   q('#aiSend').onclick = () => { const text = q('#aiBox').value.trim(); q('#aiBox').value = ''; if (text) turn(text); };
+  mf.api.agentSession = {
+    connected: () => q('#aiStatus').textContent === 'Connected',
+    provider: () => prov.value,
+    model: () => modelSel.value,
+    base: () => q('#aiBase').value.trim(),
+    headers: () => mf.secrets.header('Provider'),
+  };
 }
 
 export function deactivate() {}

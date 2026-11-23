@@ -13,5 +13,8 @@ The strip along the bottom of the **Shader** and **UV** tabs shows every materia
 ## Textures
 *Texture ▸ Create texture* makes a named canvas texture at 512, 1024 or 2048 px. It can start from the material colours or from blank white. If the mesh has no UVs, MeshForge runs Smart UV Project first. Paint the texture in 3D with the brush, or click *Paint in 2D view…* to open the split view (docs/uv.md). Undo works for every stroke. Export embeds the texture in the GLB, or saves it as `<name>.png` with the OBJ+MTL.
 
+## Programmable materials
+A programmable material is a general asset, not a face-only shader. Add one from **＋ Programmable** in the material library (Add New Material) or pick the Programmable type. It is also its own content-browser type: double-click it to edit, or drag it onto a mesh. In Edit Mode, select faces and Assign to put it on one slot. See docs/programmable.md.
+
 ## API
 `MeshForge.materials.list / get / create / duplicate / rename / remove / update / setActive / assign / slots`.

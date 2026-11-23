@@ -32,6 +32,7 @@ The model only sees the names in `plugins/ai-agent/tools.js`. Each editor change
 - Move, rotate, scale
 - Duplicate, and delete after you confirm
 - Create, duplicate, assign, and edit materials (colour and Chibili fields)
+- Programmable materials: `createProgrammableMaterial`, `editProgrammableMaterial`, `buildProgrammableMaterial` (one undo step each), plus `listMaterialParams`, `setMaterialParam`, `listMaterialStates`, `setMaterialState`, and `saveMaterialState`. Live parameter and state changes are not undo steps. `buildProgrammableMaterial` uses the connected provider and refuses, with a clear message, when nothing is connected. See docs/programmable.md.
 - Set mode, set camera, select all in Edit Mode
 - Generate or edit the landscape, and send it into the level
 - Decimate, retopo, snap to floor

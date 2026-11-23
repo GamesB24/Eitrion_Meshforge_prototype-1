@@ -130,13 +130,20 @@ def test_agent_proxy_and_leak():
 
         def do_POST(self):
             length = int(self.headers.get("Content-Length") or 0)
-            self.rfile.read(length)
+            raw = self.rfile.read(length)
+            material = json.dumps({"name": "Lava Rock", "params": [{"name": "heat", "type": "float", "min": 0, "max": 2, "default": 1, "label": "Heat"}], "glsl": "mfEmissive = vec3(1.0, 0.2, 0.0) * uP_heat; " + KEY})
             if self.path.endswith("/chat/completions"):
+                if b"PROGRAMMABLE_MATERIAL" in raw:
+                    self._send(200, {"choices": [{"message": {"content": material}}]})
+                    return
                 self._send(200, {"choices": [{"message": {"content": "listed", "tool_calls": [{"id": "c1", "type": "function", "function": {"name": "list_objects", "arguments": "{}"}}]}}]})
                 return
             if self.path.endswith("/messages"):
                 if KEY not in (self.headers.get("x-api-key") or ""):
                     self._send(401, {"error": "no"})
+                    return
+                if b"PROGRAMMABLE_MATERIAL" in raw:
+                    self._send(200, {"content": [{"type": "text", "text": material}]})
                     return
                 self._send(200, {"content": [{"type": "text", "text": "listed"}, {"type": "tool_use", "id": "c1", "name": "list_objects", "input": {}}]})
                 return
@@ -180,6 +187,15 @@ def test_agent_proxy_and_leak():
     down = client.post("/api/plugins/ai-agent/connect", json={"provider": "openai", "base": "http://127.0.0.1:1/v1"}, headers={"X-Plugin-Secret-Provider": KEY})
     assert down.json()["status"] == "network"
     assert KEY not in down.text
+    missing = client.post("/api/plugins/ai-agent/material", json={"provider": "openai", "base": base, "brief": "lava"})
+    assert missing.json()["ok"] is False and "No AI provider" in missing.json()["message"]
+    built = client.post("/api/plugins/ai-agent/material", json={"provider": "openai", "base": base, "model": "mock-model", "brief": "flowing lava", "images": ["data:image/png;base64,aaaa"]}, headers={"X-Plugin-Secret-Provider": KEY})
+    body = built.json()
+    assert body["ok"] is True and body["spec"]["params"][0]["name"] == "heat", body
+    assert "uP_heat" in body["spec"]["glsl"]
+    assert KEY not in built.text
+    anth_mat = client.post("/api/plugins/ai-agent/material", json={"provider": "anthropic", "base": base, "model": "mock-model", "brief": "lava"}, headers={"X-Plugin-Secret-Provider": KEY})
+    assert anth_mat.json()["ok"] is True and KEY not in anth_mat.text, anth_mat.text
     server.shutdown()
     hits = []
     for path in ROOT.rglob("*"):

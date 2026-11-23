@@ -5,6 +5,10 @@ import * as THREE from 'three';
 import { CHIBILI, makeChibiliMaterial, makeOutlineMaterial, syncUniforms, smoothOutlineNormals, renderSwatch, lightDir } from './chibili.js';
 import { getSlots, setSlots, applyGroups, triCount } from './mfdata.js';
 import { createColorWheel } from './colorwheel.js';
+import { PRESET_IDS, blankSpec, clonePreset, currentParamList, exportSpec, runtime, sampleRuntime, saveState, setParam, setState, shaderKey } from './progmat.js';
+import { makeProgramMaterial, rememberSlots, syncProgramMaterial, uvForSlot } from './progdraw.js';
+import { mountProgramUi } from './progview.js';
+import { onAssetActivate, setBrowserExtras } from './content.js';
 
 export const DEFAULT_MATERIALS = [
   { id: 'cherry', name: 'Cherry Red', color: '#e8383d', shade: '#6a2a5a' },
@@ -29,6 +33,11 @@ export function createMaterials(ctx) {
   const $ = (id) => document.getElementById(id);
   const canvas = ctx.canvas, vp = canvas.parentElement;
   const lib = DEFAULT_MATERIALS.map((d) => ({ ...d }));
+  for (const presetId of PRESET_IDS) {
+    const seeded = clonePreset(presetId);
+    seeded.id = 'preset_' + presetId;
+    lib.push(seeded);
+  }
   let activeId = lib[0].id, seq = 1;
   const RT = new WeakMap(), live = new Set();
   const brush = { on: false, mode: 'face', size: 40, opacity: 1, falloff: 'soft', color: null };
@@ -66,9 +75,68 @@ export function createMaterials(ctx) {
     mesh.add(o); r.outline = o; return o;
   }
   // called by the app's applyShading for every mesh
+  function ensureProgramMat(mesh, index, def) {
+    const r = rt(mesh);
+    const key = shaderKey(def);
+    const slot = (r.prog ||= [])[index];
+    if (slot && slot.key === key) return slot.mat;
+    if (slot?.mat) slot.mat.dispose();
+    const mat = makeProgramMaterial(def);
+    r.prog[index] = { key, mat, error: mat.userData.compileError || '' };
+    return mat;
+  }
+  function uvState(mesh, index, def) {
+    const geo = mesh.geometry, mf = mfOf(mesh);
+    const opts = { ...(def.uv || {}), ...(mf.uvSlots?.[index] || {}) };
+    const r = rt(mesh);
+    const cache = (r.uvCache ||= []);
+    const stamp = `${mesh.userData.mfUvRev || 0}:${index}:${opts.normalize ? 1 : 0}:${opts.planar || 'auto'}:${opts.aspect === false ? 0 : 1}`;
+    if (cache[index]?.stamp === stamp) return cache[index].uv;
+    if (geo.attributes?.position && !geo.attributes.uv) geo.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(geo.attributes.position.count * 2), 2));
+    rememberSlots(geo, getSlots(geo));
+    const uv = uvForSlot(geo, index, opts);
+    cache[index] = { stamp, uv };
+    return uv;
+  }
+  function syncOneProgram(mesh, index, mat, def, time) {
+    const uv = uvState(mesh, index, def);
+    syncProgramMaterial(mat, def, { time, light: lightDir(), uv, values: sampleRuntime(def, clock.getElapsedTime() * 1000) });
+    const slot = (rt(mesh).prog ||= [])[index];
+    if (slot) slot.error = mat.userData.compileError || '';
+  }
+  function syncPrograms(mesh, time) {
+    const mf = mfOf(mesh);
+    const list = Array.isArray(mesh.material) ? mesh.material : [mesh.material];
+    mf.slots.forEach((id, i) => {
+      const d = defFor(mesh, id);
+      if (d.kind !== 'program') return;
+      const mat = list[i]?.userData?.mfProgram ? list[i] : ensureProgramMat(mesh, i, d);
+      if (list[i] !== mat) {
+        if (Array.isArray(mesh.material)) mesh.material[i] = mat;
+        else mesh.material = mat;
+      }
+      syncOneProgram(mesh, i, mat, d, time);
+    });
+  }
+  function applyMixed(mesh) {
+    const mf = mfOf(mesh), r = rt(mesh);
+    const list = mf.slots.map((id, i) => {
+      const d = defFor(mesh, id);
+      if (d.kind === 'program') return ensureProgramMat(mesh, i, d);
+      const stds = (r.std ||= []);
+      const std = stds[i] || (stds[i] = new THREE.MeshStandardMaterial({ color: d.color || '#cccccc', roughness: 0.6, metalness: 0, side: THREE.DoubleSide }));
+      std.color.set(d.color || '#cccccc');
+      std.name = d.name || '';
+      return std;
+    });
+    if (list.length > 1) { applyGroups(mesh.geometry, list.length); mesh.geometry.userData.mfGK = groupKey(mesh); }
+    mesh.material = list.length === 1 ? list[0] : list;
+    syncPrograms(mesh, clock.getElapsedTime());
+    return mesh.material;
+  }
   function apply(mesh, on) {
     const r = RT.get(mesh);
-    if (!on) { if (r?.outline) r.outline.visible = false; return null; }
+    if (!on) { if (r?.outline) r.outline.visible = false; if (hasProgram(mesh)) return applyMixed(mesh); return null; }
     const mf = mfOf(mesh), inst = instFor(mesh);
     if (mf.albedo === 'texture' && r?.tex) { mesh.material = inst[0]; }
     else if (inst.length > 1) { applyGroups(mesh.geometry, inst.length); mesh.geometry.userData.mfGK = groupKey(mesh); mesh.material = inst; }
@@ -85,6 +153,19 @@ export function createMaterials(ctx) {
     const hasCol = !!geo.attributes.color;
     r.inst.forEach((m, i) => {
       const id = mf.slots[i], d = defFor(mesh, id);
+      if (d.kind === 'program') {
+        const pm = ensureProgramMat(mesh, i, d);
+        if (r.inst[i] !== pm) r.inst[i] = pm;
+        if (Array.isArray(mesh.material)) mesh.material[i] = pm;
+        else if (i === 0 && mesh.material !== pm) mesh.material = pm;
+        syncOneProgram(mesh, i, pm, d, time);
+        return;
+      }
+      if (m?.userData?.mfProgram) {
+        r.inst[i] = makeChibiliMaterial();
+        m = r.inst[i];
+        if (Array.isArray(mesh.material)) mesh.material[i] = m;
+      }
       const useV = hasCol && (mf.vcol || id === AUTO) && !texOn;
       const dd = (texOn || (mf.vcol && hasCol)) ? { ...d, color: '#ffffff' } : d;
       syncUniforms(m, dd, { light: L, time, vertexColors: useV, map: texOn ? r.tex.texture : null });
@@ -103,7 +184,7 @@ export function createMaterials(ctx) {
     for (const mesh of live) {
       if (!mesh.parent && !mesh.userData.mfKeep) { continue; }
       const r = RT.get(mesh); if (!r) continue;
-      if (!chib) { if (r.outline) r.outline.visible = false; continue; }
+      if (!chib) { if (hasProgram(mesh)) syncPrograms(mesh, t); if (r.outline) r.outline.visible = false; continue; }
       const inst = r.inst; if (!inst.length) continue;
       const isOurs = Array.isArray(mesh.material) ? mesh.material[0] === inst[0] : mesh.material === inst[0];
       if (!isOurs) { if (r.outline) r.outline.visible = false; continue; }
@@ -120,7 +201,20 @@ export function createMaterials(ctx) {
     const after = snap(mesh);
     ctx.editor.pushHistory({ label, undo: () => restore(mesh, before), redo: () => restore(mesh, after) });
   }
-  function refresh(mesh) { if (ctx.isChibili()) apply(mesh, true); renderUI(); ctx.updateInfo?.(); }
+  function refresh(mesh) {
+    mesh.userData.mfUvRev = (mesh.userData.mfUvRev || 0) + 1;
+    if (ctx.isChibili()) apply(mesh, true);
+    else if (hasProgram(mesh)) apply(mesh, false);
+    renderUI(); ctx.updateInfo?.();
+  }
+  function setSlotUv(mesh, slot, opts) {
+    if (!mesh || slot == null || slot < 0) return false;
+    const before = snap(mesh), mf = mfOf(mesh);
+    mf.uvSlots = mf.uvSlots || [];
+    mf.uvSlots[slot] = { ...(mf.uvSlots[slot] || {}), ...opts };
+    record(mesh, 'UV options', before);
+    return true;
+  }
   function slotIndex(mesh, id, add = true) { const mf = mfOf(mesh); let i = mf.slots.indexOf(id); if (i < 0 && add) { mf.slots.push(id); i = mf.slots.length - 1; } return i; }
   function assignObject(mesh, id = activeId) {
     if (!mesh) return false; const before = snap(mesh), mf = mfOf(mesh);
@@ -169,6 +263,13 @@ export function createMaterials(ctx) {
     status(`Deleted material${used.length ? ` (${used.length} object(s) fell back to their own colour)` : ''}`); return true;
   }
   function update(id, patch) { const m = byId(id); if (!m) return false; Object.assign(m, patch); thumbs.delete(id); renderUI(true); return true; }
+  function replace(id, spec) {
+    const m = byId(id); if (!m || !spec) return false;
+    for (const key of Object.keys(m)) if (key !== 'id') delete m[key];
+    Object.assign(m, spec, { id });
+    thumbs.delete(id); renderUI(true); return true;
+  }
+  function hasProgram(mesh) { return !!mesh?.userData?.mf?.slots?.some((id) => byId(id)?.kind === 'program'); }
   function setActive(id) { if (byId(id)) { activeId = id; renderUI(); } }
   function libJSON() { return JSON.parse(JSON.stringify(lib)); }
   function loadLib(arr, { replace = false } = {}) {
@@ -216,8 +317,12 @@ export function createMaterials(ctx) {
 
   // ---------- export / import ----------
   function stdFrom(def, extra = {}) {
-    const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(def.kind === 'sky' ? (def.bottom || def.color) : def.color || '#cccccc'), roughness: 0.6, metalness: 0, ...extra });
-    m.name = def.name || def.id; if (def.id !== AUTO) m.userData = { chibili: { ...def } };
+    const program = def.kind === 'program';
+    const m = new THREE.MeshStandardMaterial({ color: new THREE.Color(program ? (def.pbr?.color || def.color || '#cccccc') : (def.kind === 'sky' ? (def.bottom || def.color) : def.color || '#cccccc')), roughness: program ? (def.pbr?.roughness ?? 0.55) : 0.6, metalness: program ? (def.pbr?.metalness ?? 0) : 0, ...extra });
+    if (program && def.pbr?.emissive) { m.emissive = new THREE.Color(def.pbr.emissive); m.emissiveIntensity = def.pbr.emissiveIntensity ?? 1; }
+    const opacity = program ? (def.pbr?.opacity ?? 1) : 1;
+    if (opacity < 0.999) { m.transparent = true; m.opacity = opacity; m.depthWrite = false; }
+    m.name = def.name || def.id; if (def.id !== AUTO) m.userData = { chibili: program ? exportSpec(def) : { ...def } };
     if (def.kind === 'water') { m.transparent = (def.opacity ?? 1) < 1; }
     return m;
   }
@@ -258,12 +363,13 @@ export function createMaterials(ctx) {
   const thumbs = new Map();
   const libEl = document.createElement('div'); libEl.id = 'matLib'; libEl.className = 'matlib'; libEl.hidden = true;
   libEl.innerHTML = `<div class="mlhead"><button id="mlFold" class="mlfold" title="Collapse / expand">▾</button><b>Material Library</b><span class="mlhint">drag a swatch onto an object · Edit Mode: drop on a face</span><span class="grow"></span>
-    <button data-ml="new" title="New material">＋ New</button><button data-ml="dup" title="Duplicate the active material">⧉ Duplicate</button><button data-ml="ren" title="Rename (or double-click a swatch)">✎ Rename</button><button data-ml="del" title="Delete the active material">🗑 Delete</button><button data-ml="assign" class="acc" title="Assign to the selected object, or to the selected faces in Edit Mode">Assign</button></div>
+    <button data-ml="new" title="Add New Material">＋ New</button><button data-ml="program" title="Add New Material: programmable">＋ Programmable</button><button data-ml="dup" title="Duplicate the active material">⧉ Duplicate</button><button data-ml="ren" title="Rename (or double-click a swatch)">✎ Rename</button><button data-ml="del" title="Delete the active material">🗑 Delete</button><button data-ml="assign" class="acc" title="Assign to the selected object, or to the selected faces in Edit Mode">Assign</button></div>
     <div class="mlgrid" id="mlGrid"></div>`;
   vp.appendChild(libEl);
   const menu = document.createElement('div'); menu.className = 'mlmenu'; menu.hidden = true; document.body.appendChild(menu);
   function libAction(a, id = activeId) {
     if (a === 'new') return create({ name: 'Material', color: brush.color || '#d0d0d0' });
+    if (a === 'program') return createProgram();
     if (a === 'dup') return duplicate(id);
     if (a === 'ren') { const m = byId(id); const n = prompt('Material name', m?.name); if (n) rename(id, n); return; }
     if (a === 'del') return remove(id);
@@ -281,19 +387,111 @@ export function createMaterials(ctx) {
   function renderLib() {
     const grid = $('mlGrid'); if (!grid) return;
     grid.innerHTML = lib.map((m) => {
-      if (!thumbs.has(m.id)) thumbs.set(m.id, renderSwatch(m));
+      if (!thumbs.has(m.id)) thumbs.set(m.id, m.kind === 'program' ? programThumb(m) : renderSwatch(m));
       return `<div class="mlsw ${m.id === activeId ? 'on' : ''}" draggable="true" data-id="${esc(m.id)}" title="${esc(m.name)}${m.kind && m.kind !== 'toon' ? ` (${m.kind})` : ''} · drag onto an object"><img src="${thumbs.get(m.id)}" alt="" draggable="false"><span>${esc(m.name)}</span></div>`;
     }).join('');
     grid.querySelectorAll('.mlsw').forEach((el) => {
       const id = el.dataset.id;
       el.onclick = () => setActive(id);
-      el.ondblclick = () => libAction('ren', id);
-      el.oncontextmenu = (e) => { e.preventDefault(); setActive(id); menu.innerHTML = ['new:New material', 'dup:Duplicate', 'ren:Rename…', 'assign:Assign to selection', 'del:Delete'].map((s) => `<button data-a="${s.split(':')[0]}">${s.split(':')[1]}</button>`).join('');
+      el.ondblclick = () => { if (byId(id)?.kind === 'program') programUi.open(id); else libAction('ren', id); };
+      el.oncontextmenu = (e) => { e.preventDefault(); setActive(id); menu.innerHTML = ['new:New material', 'program:Programmable material', 'dup:Duplicate', 'ren:Rename…', 'assign:Assign to selection', 'del:Delete'].map((s) => `<button data-a="${s.split(':')[0]}">${s.split(':')[1]}</button>`).join('');
         Object.assign(menu.style, { left: e.clientX + 'px', top: (e.clientY - 150) + 'px' }); menu.hidden = false;
         menu.querySelectorAll('button').forEach((b) => b.onclick = () => { menu.hidden = true; libAction(b.dataset.a, id); }); };
       el.ondragstart = (e) => { e.dataTransfer.setData('text/x-mf-material', id); e.dataTransfer.setData('text/plain', 'mf-material:' + id); e.dataTransfer.effectAllowed = 'copy'; setActive(id); };
     });
+    setBrowserExtras(lib.filter((m) => m.kind === 'program').map((m) => ({ id: 'prog_' + m.id, name: m.name, category: 'program', materialId: m.id, title: 'Programmable material' })));
   }
+  function programThumb(m) {
+    const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
+    g.fillStyle = m.pbr?.color || m.color || '#223044'; g.fillRect(0, 0, 64, 64);
+    g.strokeStyle = m.pbr?.emissive || '#8fd8ff'; g.lineWidth = 4; g.strokeRect(8, 8, 48, 48);
+    g.fillStyle = '#f4f7fb'; g.font = '12px sans-serif'; g.fillText('GLSL', 16, 36);
+    return c.toDataURL();
+  }
+  function createProgram() {
+    const made = create(blankSpec('Programmable'));
+    const snap = JSON.parse(JSON.stringify(made));
+    ctx.editor.pushHistory({ label: 'Create programmable material', undo: () => remove(made.id), redo: () => { if (!byId(made.id)) create(snap); } });
+    programUi?.open(made.id);
+    return made;
+  }
+  function applyProgram(id, spec) {
+    const prev = byId(id); if (!prev) return { ok: false, error: 'No programmable material' };
+    const before = JSON.parse(JSON.stringify(prev));
+    const past = (before.history || []).slice(-7);
+    past.push({ at: Date.now(), brief: before.brief || '', glsl: before.glsl, params: before.params, pbr: before.pbr, states: before.states });
+    spec.history = past;
+    replace(id, spec);
+    const after = JSON.parse(JSON.stringify(byId(id)));
+    ctx.editor.pushHistory({ label: 'Apply programmable material', undo: () => replace(id, before), redo: () => replace(id, after) });
+    status(`Applied ${spec.name}`);
+    return { ok: true, id };
+  }
+  async function buildDraft(payload) {
+    const session = window.MeshForge?.agentSession;
+    if (!session?.connected?.()) return { ok: false, error: 'No AI provider is connected. Open the Agent tab and connect a provider. You can still edit the GLSL and the parameters by hand.' };
+    try {
+      const res = await fetch('/api/plugins/ai-agent/material', { method: 'POST', headers: { ...(session.headers?.() || {}), 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: session.provider?.() || '', base: session.base?.() || '', model: session.model?.() || '', brief: payload.brief || '', images: payload.images || [], previous: payload.previous || null }) });
+      const data = await res.json();
+      if (!data.ok || !data.spec) return { ok: false, error: data.message || data.error || 'The AI did not return a material', errors: data.errors || [] };
+      const { validateSpec } = await import('./progmat.js');
+      const checked = validateSpec(data.spec, { brief: payload.brief, images: payload.images });
+      if (!checked.ok) return { ok: false, error: checked.errors[0], errors: checked.errors };
+      return checked;
+    } catch { return { ok: false, error: 'Network error' }; }
+  }
+  function selectedProgram() {
+    const mesh = curMesh();
+    const mf = mesh?.userData?.mf;
+    let def = null, slot = null;
+    if (mf) {
+      slot = mf.active || 0;
+      if (byId(mf.slots[slot])?.kind !== 'program') slot = mf.slots.findIndex((id) => byId(id)?.kind === 'program');
+      def = byId(mf.slots[slot]);
+    }
+    if (!def || def.kind !== 'program') {
+      def = byId(activeId);
+      slot = null;
+    }
+    if (!def || def.kind !== 'program') return null;
+    const uv = { ...(def.uv || {}), ...(slot != null ? mf?.uvSlots?.[slot] : {}) };
+    const cached = mesh ? rt(mesh).uvCache?.[slot]?.uv : null;
+    const note = cached?.mode === 'planar' ? 'This slot is using a planar projection from its average normal.' : (cached?.mode === 'normalize' ? 'This slot’s UV region is normalised to 0..1.' : 'Mesh UVs are in use. uTime is built into the shader.');
+    return { id: def.id, def, mesh: slot == null ? null : mesh, slot, uv, state: runtime(def).state || '', error: mesh && slot != null ? (rt(mesh).prog?.[slot]?.error || '') : '', uvNote: note };
+  }
+  const programUi = mountProgramUi({
+    byId, session: () => window.MeshForge?.agentSession, status,
+    createBlank: () => createProgram(),
+    apply: applyProgram,
+    assign: (id) => { setActive(id); assignActive(id); },
+    buildDraft,
+    selectedProgram,
+    paramValues: (def) => currentParamList(def, clock.getElapsedTime() * 1000),
+    setLiveParam: (id, name, value) => {
+      const def = byId(id); if (!def) return;
+      const param = def.params?.find((item) => item.name === name); if (!param) return;
+      const now = clock.getElapsedTime() * 1000;
+      if (param.type === 'texture') {
+        const before = param.texture || '';
+        setParam(def, name, value, 0, now);
+        const after = param.texture || '';
+        ctx.editor.pushHistory({ label: 'Material texture', undo: () => { param.texture = before; }, redo: () => { param.texture = after; } });
+      } else setParam(def, name, value, 0, now);
+      const mesh = curMesh();
+      if (mesh && hasProgram(mesh)) { if (ctx.isChibili()) syncMesh(mesh, clock.getElapsedTime()); else syncPrograms(mesh, clock.getElapsedTime()); }
+    },
+    setLiveState: (id, name) => { const def = byId(id); if (def) setState(def, name, 180, clock.getElapsedTime() * 1000); },
+    saveLiveState: (id, name) => {
+      const def = byId(id); if (!def) return;
+      const before = JSON.parse(JSON.stringify(def.states || {}));
+      const saved = saveState(def, name); if (!saved.ok) return;
+      const after = JSON.parse(JSON.stringify(def.states));
+      ctx.editor.pushHistory({ label: 'Save material state ' + saved.state, undo: () => { def.states = before; }, redo: () => { def.states = after; } });
+      renderUI();
+    },
+    setSlotUv: (mesh, slot, opts) => setSlotUv(mesh, slot, opts),
+  });
+  onAssetActivate((asset) => { if (asset?.materialId) programUi.open(asset.materialId); });
   // drop a library swatch onto the viewport
   vp.addEventListener('drop', (e) => {
     const dt = e.dataTransfer; let id = dt?.getData('text/x-mf-material');
@@ -328,7 +526,7 @@ export function createMaterials(ctx) {
   </details>
   <details open><summary>Material</summary>
     <div class="row"><span>Name</span><input id="mtName" class="txt" style="grid-column:2/4"></div>
-    <div class="row"><span>Type</span><select id="mtKind"><option value="toon">Toon surface</option><option value="sky">Sky gradient</option><option value="water">Toon water</option></select></div>
+    <div class="row"><span>Type</span><select id="mtKind"><option value="toon">Toon surface</option><option value="sky">Sky gradient</option><option value="water">Toon water</option><option value="program">Programmable</option></select></div>
     <div class="row"><span>Base colour</span><input id="mtColor" type="color"><b></b></div>
     <div class="row"><span>Shadow tint</span><input id="mtShade" type="color"><b></b></div>
     <div class="row"><span>Light bands</span><select id="mtBands"><option value="0">Global</option><option>1</option><option>2</option><option>3</option><option>4</option><option>5</option></select></div>
@@ -341,7 +539,7 @@ export function createMaterials(ctx) {
     <div class="row" data-k="water"><span>Foam colour</span><input id="mtFoam" type="color"><b></b></div>
     <div class="row" data-k="water"><span>Foam scale</span><input id="mtFoamS" type="range" min="0.3" max="8" step="0.1"><b id="mtFoamSV"></b></div>
     <div class="row" data-k="water"><span>Waves</span><input id="mtWave" type="range" min="0" max="0.08" step="0.005"><b id="mtWaveV"></b></div>
-    <div class="row"><button class="btn" id="mtNew">＋ New</button><button class="btn" id="mtDup">⧉ Duplicate</button></div>
+    <div class="row"><button class="btn" id="mtNew">＋ New</button><button class="btn" id="mtProg">＋ Programmable</button><button class="btn" id="mtDup">⧉ Duplicate</button></div>
   </details>
   <details open><summary>Material Paint brush</summary>
     <div class="row"><span>Brush</span><button class="btn ptoggle" id="mpOn" title="Paint the active material onto the mesh (P)">🖌 Paint off</button></div>
@@ -379,6 +577,7 @@ export function createMaterials(ctx) {
   const curMesh = () => ctx.editor.debug.E?.mesh || ctx.editor.sel;
   function renderUI(libToo) {
     if (libToo) renderLib(); else libEl.querySelectorAll('.mlsw').forEach((el) => el.classList.toggle('on', el.dataset.id === activeId));
+    programUi?.syncDetails();
     if (panel.hidden) return;
     const mesh = curMesh(), mf = mesh ? mfOf(mesh) : null;
     $('mtSlots').innerHTML = mf ? mf.slots.map((id, i) => { const d = defFor(mesh, id); return `<li data-i="${i}" class="${i === mf.active ? 'on' : ''}"><i style="background:${esc(d.color)}"></i>${i + 1}. ${esc(d.name)}</li>`; }).join('') : '<li class="dim">No object selected</li>';
@@ -408,7 +607,7 @@ export function createMaterials(ctx) {
   }
   const editM = (patch) => { const m = byId(activeId); if (!m) return; Object.assign(m, patch); thumbs.delete(m.id); renderUI(true); };
   $('mtName').onchange = (e) => rename(activeId, e.target.value);
-  $('mtKind').onchange = (e) => editM({ kind: e.target.value });
+  $('mtKind').onchange = (e) => { if (e.target.value === 'program') { e.target.value = byId(activeId)?.kind || 'toon'; createProgram(); return; } editM({ kind: e.target.value }); };
   $('mtColor').oninput = (e) => { editM({ color: e.target.value }); wheel.set(e.target.value); };
   $('mtShade').oninput = (e) => editM({ shade: e.target.value });
   $('mtBands').onchange = (e) => editM({ bands: +e.target.value });
@@ -418,7 +617,7 @@ export function createMaterials(ctx) {
   $('mtOutW').oninput = (e) => editM({ outlineWidth: +e.target.value }); $('mtOutC').oninput = (e) => editM({ outlineColor: e.target.value });
   $('mtTop').oninput = (e) => editM({ top: e.target.value }); $('mtBottom').oninput = (e) => editM({ bottom: e.target.value });
   $('mtFoam').oninput = (e) => editM({ foam: e.target.value }); $('mtFoamS').oninput = (e) => editM({ foamScale: +e.target.value }); $('mtWave').oninput = (e) => editM({ wave: +e.target.value });
-  $('mtNew').onclick = () => libAction('new'); $('mtDup').onclick = () => libAction('dup');
+  $('mtNew').onclick = () => libAction('new'); $('mtProg').onclick = () => libAction('program'); $('mtDup').onclick = () => libAction('dup');
   $('mtSlotAdd').onclick = () => { const m = curMesh(); if (m) addSlot(m); };
   $('mtSlotDel').onclick = () => { const m = curMesh(); if (m) removeSlot(m); };
   $('mtAssign').onclick = () => assignSlotToSelection(mfOf(curMesh() || { userData: {} }).active);
@@ -562,7 +761,7 @@ export function createMaterials(ctx) {
   renderUI(true);
   // test/debug + API
   return {
-    lib, AUTO, apply, tick, mfOf, defFor, byId, get activeId() { return activeId; }, setActive, create, duplicate, rename, remove, update, libJSON, loadLib,
+    lib, AUTO, apply, tick, mfOf, defFor, byId, get activeId() { return activeId; }, setActive, create, duplicate, rename, remove, update, replace, libJSON, loadLib, hasProgram, setSlotUv, clockNow: () => clock.getElapsedTime() * 1000,
     assignObject, assignFaces, assignSlotToSelection, selectSlotFaces, addSlot, removeSlot, setSlotMaterial, dropMaterial,
     createTexture, deleteTexture, renameTexture, texOf, texDirty, setAlbedo, exportMaterial, adopt, adoptTextureImage,
     brush, setPaint, blockPointer, show, showLibrary, renderUI, initVertexColours, wheel, paintDab: (h, e) => dab(h, e), beginPaint, endPaint,

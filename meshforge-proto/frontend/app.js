@@ -15,6 +15,9 @@ import { undoAdded, redoAdded } from './historyguard.js';
 import { groupNodes, ungroupNode, joinMeshes, similarMeshes } from './sceneactions.js';
 import { createRecover } from './recover.js';
 import { readDropId, assetById, objectFromAsset, importFile, mountBrowser } from './content.js';
+import { buildTestHead } from './testhead.js';
+import { geometryFromHead } from './progdraw.js';
+import { applyMaterialEvent, createProgramActions } from './progmat.js';
 import { initPlugins } from './plugins.js';
 
 const $ = (id) => document.getElementById(id);
@@ -166,6 +169,7 @@ function applyShading() {
     if (!o.isMesh || o.userData.isOverlay) return;
     o.userData.orig ??= o.material;
     if (state.shading === 'chibili' && mats) mats.apply(o, true);
+    else if (mats?.hasProgram?.(o)) mats.apply(o, false);
     else { mats?.apply(o, false); o.material = state.shading === 'color' ? o.userData.orig : MAT[state.shading]; }
     let ov = o.children.find((c) => c.userData.isWireOverlay);
     if (!ov) { ov = new THREE.Mesh(o.geometry, MAT.overlay); ov.userData.isOverlay = ov.userData.isWireOverlay = true; ov.raycast = () => {}; o.add(ov); }
@@ -718,7 +722,24 @@ function addPrimitive(kind) {
   document.querySelectorAll('[data-export]').forEach((b) => b.disabled = false);
   applyShading(); updateInfo(); editor.select(mesh); return mesh;
 }
-Object.assign(ACTIONS, { addsky: () => addPrimitive('sky'), addwater: () => addPrimitive('water'), matlib: () => mats.showLibrary(mats.libEl.hidden), shader: () => setWorkspace('shader'), uvws: () => setWorkspace('uv') });
+function addTestHead() {
+  if (land?.active) setWorkspace('gen');
+  if (!mats.byId('helmet_shell')) mats.create({ id: 'helmet_shell', name: 'Helmet Shell', color: '#d9d3c8', shade: '#6a6258' });
+  const face = mats.byId('preset_screen');
+  const mesh = new THREE.Mesh(geometryFromHead(buildTestHead()), new THREE.MeshStandardMaterial({ color: 0xd9d3c8, roughness: 0.6, side: THREE.DoubleSide }));
+  mesh.name = 'MIT test head';
+  mesh.userData.mf = { slots: ['helmet_shell', face.id], active: 1, albedo: 'material', vcol: false, uvSlots: [null, { normalize: true, planar: 'auto', aspect: true }] };
+  addUndoable(ensureScene(true), mesh, { id: 'testhead', label: mesh.name, source: 'primitive' }, 'Add MIT test head');
+  $('drop').classList.add('hidden');
+  document.querySelectorAll('[data-export]').forEach((b) => b.disabled = false);
+  setShading('chibili');
+  editor.select(mesh);
+  updateInfo();
+  frameModel();
+  $('progMsg').textContent = 'MIT test head. Slot 2 is the curved face panel (Screen Face).';
+  return mesh;
+}
+Object.assign(ACTIONS, { addsky: () => addPrimitive('sky'), addwater: () => addPrimitive('water'), testhead: () => addTestHead(), matlib: () => mats.showLibrary(mats.libEl.hidden), shader: () => setWorkspace('shader'), uvws: () => setWorkspace('uv') });
 document.querySelectorAll('.menu [data-act]').forEach((b) => b.onclick = () => { document.activeElement?.blur(); ACTIONS[b.dataset.act]?.(); });
 // scene.json: persist the material library and per-object slots; honour room.camera
 const _exportScene = window.MeshForge.exportScene;
@@ -1020,8 +1041,31 @@ const agentActions = {
     return { ok: true };
   },
 };
-Object.assign(window.MeshForge, {
+const programActions = createProgramActions({
+  mats, pushHistory: (entry) => editor.pushHistory(entry), findMesh: findSceneNode,
+  selected: () => editor.debug.E?.mesh || editor.sel,
+  active: () => mats.byId(mats.activeId),
+  now: () => mats.clockNow(),
+  session: () => window.MeshForge.agentSession,
+  post: async (body) => {
+    const session = window.MeshForge.agentSession;
+    const res = await fetch('/api/plugins/ai-agent/material', { method: 'POST', headers: { ...(session?.headers?.() || {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return res.json();
+  },
+});
+Object.assign(agentActions, programActions);
+const materialListeners = new Set();
+Object.assign(window.MeshForge, programActions, {
   undo: () => editor.undo(), redo: () => editor.redo(),
+  addTestHead: () => addTestHead().userData.sceneId,
+  materialEvents: {
+    on(fn) { materialListeners.add(fn); return () => materialListeners.delete(fn); },
+    emit(name, data) {
+      const now = mats.clockNow();
+      for (const def of mats.lib) if (def.kind === 'program') applyMaterialEvent(def, name, data, now);
+      for (const fn of materialListeners) fn(name, data);
+    },
+  },
   autosaveNow: (reason) => recover.write(reason || 'manual'),
   groupSelection: () => doGroup(selectionMeshes()),
   joinSelection: () => doJoin(selectionMeshes()),
