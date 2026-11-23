@@ -28,6 +28,14 @@ export const TOOLS = [
   { name: 'views_to_mesh', description: 'Turn the four views into a mesh with voxel carve, or the front view through TripoSR if carve is not asked.', parameters: { type: 'object', properties: { mode: { type: 'string' } } } },
   { name: 'export_scene', description: 'Download the level as glb or obj.', parameters: { type: 'object', properties: { format: { type: 'string' } } } },
   { name: 'edit_select_all', description: 'In Edit Mode, select all vertices, edges, or faces.', parameters: obj },
+  { name: 'createProgrammableMaterial', description: 'Create a programmable material. Optional preset: screen, hologram, water, or panel. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, preset: { type: 'string' }, brief: { type: 'string' } } } },
+  { name: 'editProgrammableMaterial', description: 'Edit a programmable material brief, GLSL snippet, parameters, states, PBR, or UV options. The snippet is GLSL, not JavaScript. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, brief: { type: 'string' }, glsl: { type: 'string' }, params: { type: 'array' }, states: { type: 'object' }, pbr: { type: 'object' }, uv: { type: 'object' } }, required: ['id'] } },
+  { name: 'buildProgrammableMaterial', description: 'Build a programmable material from a text brief with the connected AI provider. Fails with a clear message if no provider is connected. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, name: { type: 'string' }, brief: { type: 'string' }, images: { type: 'array' } }, required: ['brief'] } },
+  { name: 'listMaterialParams', description: 'List declared parameters and live values for a programmable material or an object.', parameters: { type: 'object', properties: { target: { type: 'string' }, slot: { type: 'number' } }, required: ['target'] } },
+  { name: 'setMaterialParam', description: 'Set one live parameter. blendMs eases to the new value. This does not create an undo step.', parameters: { type: 'object', properties: { target: { type: 'string' }, name: { type: 'string' }, value: {}, blendMs: { type: 'number' }, slot: { type: 'number' } }, required: ['target', 'name', 'value'] } },
+  { name: 'listMaterialStates', description: 'List named states on a programmable material.', parameters: { type: 'object', properties: { target: { type: 'string' }, slot: { type: 'number' } }, required: ['target'] } },
+  { name: 'setMaterialState', description: 'Blend a programmable material to a named state. This does not create an undo step.', parameters: { type: 'object', properties: { target: { type: 'string' }, name: { type: 'string' }, blendMs: { type: 'number' }, slot: { type: 'number' } }, required: ['target', 'name'] } },
+  { name: 'saveMaterialState', description: 'Save the current parameter values as a named state. One undo step.', parameters: { type: 'object', properties: { target: { type: 'string' }, name: { type: 'string' }, slot: { type: 'number' } }, required: ['target', 'name'] } },
 ];
 
 const NAMES = new Set(TOOLS.map((t) => t.name));
@@ -160,6 +168,38 @@ export async function runTool(ctx, name, args = {}) {
     if (name === 'edit_select_all') {
       const r = await actions.editSelectAll();
       return { ok: !!r.ok, summary: summary(r.ok ? 'selected everything in Edit Mode' : (r.error || 'could not select')), text: JSON.stringify(r) };
+    }
+    if (name === 'createProgrammableMaterial') {
+      const r = await actions.createProgrammableMaterial(args);
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `created programmable material ${r.name}` : (r?.error || 'could not create')), text: JSON.stringify(r) };
+    }
+    if (name === 'editProgrammableMaterial') {
+      const r = await actions.editProgrammableMaterial(args.id, args);
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `edited programmable material ${args.id}` : (r?.error || 'could not edit')), text: JSON.stringify(r) };
+    }
+    if (name === 'buildProgrammableMaterial') {
+      const r = await actions.buildProgrammableMaterial(args);
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `built programmable material ${r.name}` : (r?.error || 'could not build')), text: JSON.stringify(r) };
+    }
+    if (name === 'listMaterialParams') {
+      const r = actions.listMaterialParams(args.target, args.slot);
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `listed ${r.params.length} parameter(s)` : (r?.error || 'no parameters')), text: JSON.stringify(r) };
+    }
+    if (name === 'setMaterialParam') {
+      const r = actions.setMaterialParam(args.target, args.name, args.value, { blendMs: args.blendMs, slot: args.slot });
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `set ${args.name}` : (r?.error || 'could not set')), text: JSON.stringify(r) };
+    }
+    if (name === 'listMaterialStates') {
+      const r = actions.listMaterialStates(args.target, args.slot);
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `listed states` : (r?.error || 'no states')), text: JSON.stringify(r) };
+    }
+    if (name === 'setMaterialState') {
+      const r = actions.setMaterialState(args.target, args.name, { blendMs: args.blendMs, slot: args.slot });
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `set state ${args.name}` : (r?.error || 'no state')), text: JSON.stringify(r) };
+    }
+    if (name === 'saveMaterialState') {
+      const r = actions.saveMaterialState(args.target, args.name, { slot: args.slot });
+      return { ok: !!r?.ok, summary: summary(r?.ok ? `saved state ${r.state}` : (r?.error || 'could not save')), text: JSON.stringify(r) };
     }
   } catch (err) {
     return { ok: false, summary: summary('action failed'), text: String(err.message || err).slice(0, 300) };

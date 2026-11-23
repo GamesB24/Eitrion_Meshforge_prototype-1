@@ -5,9 +5,18 @@ import { classifyAsset } from './catalog.js';
 import { meshesFromOBJ } from './objmtl.js';
 
 const assets = [];
+const extras = [];
 const listeners = new Set();
 let seq = 1;
+let onActivate = null;
 const CATS = ['building', 'tree', 'prop', 'character'];
+const EXTRA_LABELS = { program: 'Programmable' };
+
+export function setBrowserExtras(list) {
+  extras.splice(0, extras.length, ...(Array.isArray(list) ? list : []));
+  emit();
+}
+export function onAssetActivate(fn) { onActivate = fn; }
 
 function emit() { for (const fn of listeners) fn(assets); }
 
@@ -109,28 +118,43 @@ export function mountBrowser(host) {
   host.classList.add('content-browser');
   const draw = () => {
     host.replaceChildren();
-    const title = document.createElement('div'); title.className = 'hint0'; title.textContent = 'Content — drag a mesh onto a landscape slot or into the viewport';
+    const title = document.createElement('div'); title.className = 'hint0'; title.textContent = 'Content — drag a mesh onto a slot, or double-click a programmable material';
     host.appendChild(title);
     if (!assets.length) {
       const empty = document.createElement('div'); empty.className = 'hint0'; empty.textContent = 'No assets yet. Drop a GLB, glTF or OBJ here.';
       host.appendChild(empty);
     }
+    const paint = (a, meshDrag) => {
+      const row = document.createElement('div');
+      row.className = 'asset-row'; row.draggable = true; row.dataset.id = a.id; row.textContent = a.name;
+      row.title = a.title || a.category;
+      row.addEventListener('dragstart', (e) => {
+        if (a.materialId) {
+          e.dataTransfer.setData('text/x-mf-material', a.materialId);
+          e.dataTransfer.setData('text/plain', 'mf-material:' + a.materialId);
+        }
+        if (meshDrag) {
+          e.dataTransfer.setData('application/x-meshforge-asset', a.id);
+          e.dataTransfer.setData('text/plain', 'mf-asset:' + a.id);
+        }
+        e.dataTransfer.effectAllowed = 'copy';
+      });
+      row.addEventListener('dblclick', (e) => { e.preventDefault(); onActivate?.(a); });
+      host.appendChild(row);
+    };
     for (const cat of CATS) {
       const rows = assets.filter((a) => a.category === cat);
       if (!rows.length) continue;
       const h = document.createElement('b'); h.textContent = cat.charAt(0).toUpperCase() + cat.slice(1);
       host.appendChild(h);
-      for (const a of rows) {
-        const row = document.createElement('div');
-        row.className = 'asset-row'; row.draggable = true; row.dataset.id = a.id; row.textContent = a.name;
-        row.title = a.category;
-        row.addEventListener('dragstart', (e) => {
-          e.dataTransfer.setData('application/x-meshforge-asset', a.id);
-          e.dataTransfer.setData('text/plain', 'mf-asset:' + a.id);
-          e.dataTransfer.effectAllowed = 'copy';
-        });
-        host.appendChild(row);
-      }
+      for (const a of rows) paint(a, true);
+    }
+    const groups = [...new Set(extras.map((a) => a.category))];
+    for (const cat of groups) {
+      const rows = extras.filter((a) => a.category === cat);
+      const h = document.createElement('b'); h.textContent = EXTRA_LABELS[cat] || cat;
+      host.appendChild(h);
+      for (const a of rows) paint(a, false);
     }
   };
   host.addEventListener('dragover', (e) => { e.preventDefault(); host.classList.add('over'); });
