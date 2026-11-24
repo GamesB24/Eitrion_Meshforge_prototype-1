@@ -435,6 +435,49 @@ def views(request: Request, body: dict = Body(...)):
     return {"ok": True, "status": "connected", "images": images, "spends": True, "message": "Four views ready. This step made four paid Gemini image calls."}
 
 
+@router.post("/script")
+def script_edit(request: Request, body: dict = Body(...)):
+    """Ask the connected provider for a replacement gameplay script. The key is not stored."""
+    key = _key(request, "Provider")
+    provider = str(body.get("provider") or "")
+    if not key:
+        return {"ok": False, "status": "invalid", "message": "No AI provider is connected. You can still edit the script by hand."}
+    language = "GLSL" if str(body.get("language") or "") == "glsl" else "JavaScript"
+    brief = str(body.get("brief") or "")
+    source = str(body.get("source") or "")
+    ask = (
+        "Return JSON only, shaped {\"script\": \"...\"}. The script is "
+        + language
+        + ". Do not use eval, Function, fetch, the DOM, or the network. "
+        + "Keep the lifecycle function names if they are already there. Brief: "
+        + brief
+        + "\nCurrent source:\n"
+        + source[:8000]
+    )
+    try:
+        base = resolve_base(provider, body.get("base"))
+        model = str(body.get("model") or "") or ((_SUGGESTED.get(provider) or ["custom"])[0])
+        result = complete_text(provider, key, base, model, ask)
+    except PermissionError:
+        return {"ok": False, "status": "invalid", "message": "Invalid key"}
+    except ValueError as exc:
+        return {"ok": False, "status": "invalid", "message": _scrub(str(exc), key)}
+    except Exception:
+        return {"ok": False, "status": "network", "message": "Network error"}
+    spec = extract_json(result.get("text") or "")
+    text = ""
+    if isinstance(spec, dict):
+        text = str(spec.get("script") or spec.get("source") or spec.get("glsl") or "")
+    if not text:
+        raw = result.get("text") or ""
+        if "function " in raw or "mfAlbedo" in raw:
+            text = raw
+    text = _scrub(text, key)
+    if not text.strip():
+        return {"ok": False, "message": "The model did not return a script."}
+    return {"ok": True, "script": text}
+
+
 @router.post("/material")
 def material(request: Request, body: dict = Body(...)):
     """Ask the connected provider for one programmable-material spec. The key is not stored."""

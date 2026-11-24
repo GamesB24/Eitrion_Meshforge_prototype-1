@@ -6,23 +6,27 @@ import { meshesFromOBJ } from './objmtl.js';
 
 const assets = [];
 const extras = [];
+const extraBuckets = new Map();
 const listeners = new Set();
+const activators = new Set();
 let seq = 1;
-let onActivate = null;
+let onCommand = null;
 const CATS = ['building', 'tree', 'prop', 'character'];
-const EXTRA_LABELS = { program: 'Programmable' };
+const EXTRA_LABELS = { program: 'Programmable', blueprint: 'Blueprints', script: 'Scripts', level: 'Level' };
 
-export function setBrowserExtras(list) {
-  extras.splice(0, extras.length, ...(Array.isArray(list) ? list : []));
+export function setBrowserExtras(list, source = 'default') {
+  extraBuckets.set(source, Array.isArray(list) ? list.slice() : []);
+  extras.splice(0, extras.length, ...[...extraBuckets.values()].flat());
   emit();
 }
-export function onAssetActivate(fn) { onActivate = fn; }
+export function onAssetActivate(fn) { activators.add(fn); return () => activators.delete(fn); }
+export function onAssetCommand(fn) { onCommand = fn; }
 
 function emit() { for (const fn of listeners) fn(assets); }
 
 export function onAssets(fn) { listeners.add(fn); return () => listeners.delete(fn); }
 export function listAssets() { return assets.slice(); }
-export function assetById(id) { return assets.find((a) => a.id === id) || null; }
+export function assetById(id) { return assets.find((a) => a.id === id) || extras.find((a) => a.id === id) || null; }
 
 export function readDropId(dt) {
   if (!dt) return '';
@@ -118,7 +122,7 @@ export function mountBrowser(host) {
   host.classList.add('content-browser');
   const draw = () => {
     host.replaceChildren();
-    const title = document.createElement('div'); title.className = 'hint0'; title.textContent = 'Content — drag a mesh onto a slot, or double-click a programmable material';
+    const title = document.createElement('div'); title.className = 'hint0'; title.textContent = 'Content — drag a mesh onto a slot. Double-click a mesh for collision, or a blueprint or shader to edit it.';
     host.appendChild(title);
     if (!assets.length) {
       const empty = document.createElement('div'); empty.className = 'hint0'; empty.textContent = 'No assets yet. Drop a GLB, glTF or OBJ here.';
@@ -139,7 +143,11 @@ export function mountBrowser(host) {
         }
         e.dataTransfer.effectAllowed = 'copy';
       });
-      row.addEventListener('dblclick', (e) => { e.preventDefault(); onActivate?.(a); });
+      row.addEventListener('dblclick', (e) => { e.preventDefault(); for (const fn of activators) fn(a); });
+      row.addEventListener('contextmenu', (e) => {
+        e.preventDefault(); e.stopPropagation();
+        onCommand?.(a, e);
+      });
       host.appendChild(row);
     };
     for (const cat of CATS) {
@@ -154,7 +162,7 @@ export function mountBrowser(host) {
       const rows = extras.filter((a) => a.category === cat);
       const h = document.createElement('b'); h.textContent = EXTRA_LABELS[cat] || cat;
       host.appendChild(h);
-      for (const a of rows) paint(a, false);
+      for (const a of rows) paint(a, !a.materialId);
     }
   };
   host.addEventListener('dragover', (e) => { e.preventDefault(); host.classList.add('over'); });

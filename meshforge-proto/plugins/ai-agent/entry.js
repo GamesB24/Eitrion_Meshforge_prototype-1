@@ -159,7 +159,10 @@ export async function activate(mf) {
         const res = await mf.backend('chat', { method: 'POST', headers: { ...mf.secrets.header('Provider'), 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: ctx.provider, base: ctx.base, model: modelSel.value, messages, tools: TOOLS }) });
         const data = await res.json();
         if (!data.ok) { line('Agent', data.message || 'Network error'); break; }
-        if (data.text) line('Assistant', data.text);
+        if (data.text) {
+          line('Assistant', data.text);
+          mf.api.agentVoice?.hear?.('agent', data.text);
+        }
         const calls = data.tool_calls || [];
         if (!calls.length) break;
         messages.push({ role: 'assistant', content: data.text || '', tool_calls: calls });

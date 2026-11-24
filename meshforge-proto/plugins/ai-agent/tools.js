@@ -36,6 +36,24 @@ export const TOOLS = [
   { name: 'listMaterialStates', description: 'List named states on a programmable material.', parameters: { type: 'object', properties: { target: { type: 'string' }, slot: { type: 'number' } }, required: ['target'] } },
   { name: 'setMaterialState', description: 'Blend a programmable material to a named state. This does not create an undo step.', parameters: { type: 'object', properties: { target: { type: 'string' }, name: { type: 'string' }, blendMs: { type: 'number' }, slot: { type: 'number' } }, required: ['target', 'name'] } },
   { name: 'saveMaterialState', description: 'Save the current parameter values as a named state. One undo step.', parameters: { type: 'object', properties: { target: { type: 'string' }, name: { type: 'string' }, slot: { type: 'number' } }, required: ['target', 'name'] } },
+  { name: 'listScriptables', description: 'List actors, blueprints, and programmable materials that can hold a script.', parameters: obj },
+  { name: 'getScript', description: 'Read one script or a programmable material GLSL snippet.', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'setScript', description: 'Set a gameplay script on an actor. One undo step. The script is sandboxed and cannot touch the page.', parameters: { type: 'object', properties: { id: { type: 'string' }, source: { type: 'string' } }, required: ['id', 'source'] } },
+  { name: 'validateScript', description: 'Check a script without saving it. Returns errors with line numbers.', parameters: { type: 'object', properties: { source: { type: 'string' } }, required: ['source'] } },
+  { name: 'attachScript', description: 'Attach an existing script record to an actor. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, scriptId: { type: 'string' } }, required: ['id', 'scriptId'] } },
+  { name: 'detachScript', description: 'Remove the script from an actor. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'createBlueprint', description: 'Create a blueprint asset. actorType is static, character, npc, or level. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, actorType: { type: 'string' }, primitive: { type: 'string' }, script: { type: 'string' }, collision: { type: 'object' } }, required: ['name'] } },
+  { name: 'spawnActor', description: 'Place an actor from a blueprint. One undo step.', parameters: { type: 'object', properties: { blueprint: { type: 'string' }, name: { type: 'string' }, position: { type: 'array' }, scale: { type: 'array' } }, required: ['blueprint'] } },
+  { name: 'setActorType', description: 'Change an actor type: static, character, npc, or level. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, type: { type: 'string' } }, required: ['id', 'type'] } },
+  { name: 'listActors', description: 'List actors with type, transform, collision, and spawn flag.', parameters: obj },
+  { name: 'runPlay', description: 'Start Play mode. Scripts run until stopPlay.', parameters: obj },
+  { name: 'stopPlay', description: 'Stop Play mode and restore transforms.', parameters: obj },
+  { name: 'newProject', description: 'Start a new empty project. Asks first. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' } } } },
+  { name: 'setLandscapeSize', description: 'Set the landscape square size in metres and an optional height. Depth uses the same edge as width. One undo step.', parameters: { type: 'object', properties: { width: { type: 'number' }, depth: { type: 'number' }, height: { type: 'number' } } } },
+  { name: 'placePrimitive', description: 'Place a cube, sphere, capsule, plane, building, or spawn. Sets actor type, scale, position, and collision. One undo step.', parameters: { type: 'object', properties: { kind: { type: 'string' }, name: { type: 'string' }, position: { type: 'array' }, scale: { type: 'array' }, rotation: { type: 'array' }, actorType: { type: 'string' }, collision: { type: 'object' } }, required: ['kind'] } },
+  { name: 'setCollision', description: 'Set collision on an actor. preset is BlockAll, OverlapAll, NoCollision, Pawn, or Water. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, preset: { type: 'string' }, type: { type: 'string' }, enabled: { type: 'boolean' } }, required: ['id'] } },
+  { name: 'addSpawn', description: 'Add a spawn point actor. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, position: { type: 'array' } } } },
+  { name: 'saveProject', description: 'Save the open level as a .mfproj file on this computer.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
 ];
 
 const NAMES = new Set(TOOLS.map((t) => t.name));
@@ -50,7 +68,7 @@ export async function runTool(ctx, name, args = {}) {
   const api = ctx.api;
   const actions = api.actions;
   if (!actions) return { ok: false, summary: summary('the editor actions are not ready'), text: 'no actions' };
-  if (ctx.ask && name !== 'delete_object') {
+  if (ctx.ask && name !== 'delete_object' && name !== 'newProject') {
     const allowed = await ctx.confirm(`Run ${name}?`);
     if (!allowed) return { ok: false, summary: summary(`skipped ${name}`), text: 'skipped' };
   }
@@ -200,6 +218,80 @@ export async function runTool(ctx, name, args = {}) {
     if (name === 'saveMaterialState') {
       const r = actions.saveMaterialState(args.target, args.name, { slot: args.slot });
       return { ok: !!r?.ok, summary: summary(r?.ok ? `saved state ${r.state}` : (r?.error || 'could not save')), text: JSON.stringify(r) };
+    }
+    if (name === 'listScriptables') {
+      const list = actions.listScriptables?.() || [];
+      return { ok: true, summary: summary(`listed ${list.length} scriptable(s)`), text: JSON.stringify(list) };
+    }
+    if (name === 'getScript') {
+      const r = actions.getScript?.(args.id) || { ok: false, error: 'No script API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `read script ${args.id}` : (r.error || 'no script')), text: JSON.stringify(r) };
+    }
+    if (name === 'setScript') {
+      const r = actions.setScript?.(args.id, args.source) || { ok: false, error: 'No script API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `set script on ${args.id}` : (r.error || 'could not set script')), text: JSON.stringify(r) };
+    }
+    if (name === 'validateScript') {
+      const r = actions.validateScript?.(args.source) || { ok: false, error: 'No script API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? 'script is valid' : (r.error || r.errors?.[0]?.message || 'script has errors')), text: JSON.stringify(r) };
+    }
+    if (name === 'attachScript') {
+      const r = actions.attachScript?.(args.id, args.scriptId) || { ok: false, error: 'No script API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `attached ${args.scriptId}` : (r.error || 'could not attach')), text: JSON.stringify(r) };
+    }
+    if (name === 'detachScript') {
+      const r = actions.detachScript?.(args.id) || { ok: false, error: 'No script API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `detached script from ${args.id}` : (r.error || 'could not detach')), text: JSON.stringify(r) };
+    }
+    if (name === 'createBlueprint') {
+      const r = actions.createBlueprint?.(args) || { ok: false, error: 'No blueprint API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `created blueprint ${r.name}` : (r.error || 'could not create blueprint')), text: JSON.stringify(r) };
+    }
+    if (name === 'spawnActor') {
+      const r = actions.spawnActor?.(args) || { ok: false, error: 'No actor API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `spawned ${r.name}` : (r.error || 'could not spawn')), text: JSON.stringify(r) };
+    }
+    if (name === 'setActorType') {
+      const r = actions.setActorType?.(args.id, args.type) || { ok: false, error: 'No actor API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `set ${args.id} to ${args.type}` : (r.error || 'could not set type')), text: JSON.stringify(r) };
+    }
+    if (name === 'listActors') {
+      const list = actions.listActors?.() || [];
+      return { ok: true, summary: summary(`listed ${list.length} actor(s)`), text: JSON.stringify(list) };
+    }
+    if (name === 'runPlay') {
+      const r = await actions.runPlay?.() || { ok: false, error: 'Play is not ready' };
+      return { ok: !!r.ok, summary: summary(r.playing ? 'playing' : (r.error || 'could not play')), text: JSON.stringify(r) };
+    }
+    if (name === 'stopPlay') {
+      const r = await actions.stopPlay?.() || { ok: false, error: 'Play is not ready' };
+      return { ok: !!r.ok, summary: summary('stopped play'), text: JSON.stringify(r) };
+    }
+    if (name === 'newProject') {
+      const ok = await ctx.confirm('Start a new project? You can undo it.');
+      if (!ok) return { ok: false, summary: summary('new project cancelled'), text: 'cancelled' };
+      const r = actions.newProject?.(args) || { ok: false, error: 'No project API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `new project ${r.name || ''}`.trim() : (r.error || 'could not start')), text: JSON.stringify(r) };
+    }
+    if (name === 'setLandscapeSize') {
+      const r = actions.setLandscapeSize?.(args) || { ok: false, error: 'No landscape API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `landscape size ${r.size}` : (r.error || 'could not resize')), text: JSON.stringify(r) };
+    }
+    if (name === 'placePrimitive') {
+      const r = actions.placePrimitive?.(args) || { ok: false, error: 'No place API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `placed ${r.name}` : (r.error || 'could not place')), text: JSON.stringify(r) };
+    }
+    if (name === 'setCollision') {
+      const r = actions.setCollision?.(args.id, args) || { ok: false, error: 'No collision API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `set collision on ${args.id}` : (r.error || 'could not set collision')), text: JSON.stringify(r) };
+    }
+    if (name === 'addSpawn') {
+      const r = actions.addSpawn?.(args) || { ok: false, error: 'No spawn API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `added spawn ${r.name}` : (r.error || 'could not add spawn')), text: JSON.stringify(r) };
+    }
+    if (name === 'saveProject') {
+      const r = await actions.saveProject?.(args.path) || { ok: false, error: 'No save API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `saved ${r.path}` : (r.error || 'could not save')), text: JSON.stringify(r) };
     }
   } catch (err) {
     return { ok: false, summary: summary('action failed'), text: String(err.message || err).slice(0, 300) };

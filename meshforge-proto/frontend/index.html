@@ -29,7 +29,7 @@
       <button data-act="front">Front <kbd>Numpad 1</kbd></button><button data-act="right">Right <kbd>Numpad 3</kbd></button><button data-act="top">Top <kbd>Numpad 7</kbd></button><hr><button data-act="land">Landscape workspace on / off</button><button data-act="land2scene">Send landscape to scene</button><hr><button data-act="shader">Shader workspace</button><button data-act="uvws">UV workspace (2D paint)</button><button data-act="matlib">Material library window on / off</button></div></div>
     <div class="menu" tabindex="0"><span>Help</span><div class="drop-menu"><button data-act="keys">Keyboard shortcuts</button><button data-act="skeys">Sculpt mode shortcuts</button></div></div>
   </nav>
-  <div class="tabs"><span class="tab on" id="tabGen" title="Image to 3D">Generate</span><span class="tab" id="tabLand" title="Paint a map into a 3D landscape">Landscape</span><span class="tab dim" title="Planned">Parts</span><span class="tab dim" title="Planned">Retopo</span><span class="tab" id="tabShader" title="Chibili materials, material paint and textures">Shader</span><span class="tab" id="tabUV" title="UV unwrap and 2D texture paint (split view)">UV</span><span class="tab dim" title="Planned">Script</span></div>
+  <div class="tabs"><span class="tab on" id="tabGen" title="Image to 3D">Generate</span><span class="tab" id="tabLand" title="Paint a map into a 3D landscape">Landscape</span><span class="tab dim" title="Planned">Parts</span><span class="tab dim" title="Planned">Retopo</span><span class="tab" id="tabShader" title="Chibili materials, material paint and textures">Shader</span><span class="tab" id="tabUV" title="UV unwrap and 2D texture paint (split view)">UV</span><span class="tab" id="tabScript" title="Script editor">Script</span></div>
   <span class="grow"></span>
   <span id="device" class="chip">…</span>
   <span id="triCount" class="chip" hidden>0 tris</span>
@@ -99,7 +99,9 @@
         <tr><td>Numpad 1/3/7 (Ctrl = opposite), 5, .</td><td>Front/Right/Top, Persp/Ortho, Frame</td></tr>
         <tr><td>Z</td><td>Toggle wireframe shading</td></tr>
         <tr><td>H / Shift+H</td><td>Hide the selection / show hidden objects</td></tr>
-        <tr><td>Right click</td><td>Group, Ungroup, Join, Select Similar</td></tr>
+        <tr><td>Right click</td><td>Edit Script, Edit Collision, Group, Ungroup, Join, Select Similar</td></tr>
+        <tr><td>Double-click an object</td><td>Open its script. In the content browser, double-click a mesh for collision.</td></tr>
+        <tr><td>Play / Stop, Escape while playing</td><td>Run scripts. WASD or arrows move a Character. E interacts. Space jumps.</td></tr>
         <tr><td>Pose Mode</td><td>Needs a rigged GLB/glTF. Generated meshes have no skeleton.</td></tr>
         <tr><td>Delete / Shift+D</td><td>Delete / duplicate the selected object</td></tr>
       </table></div>

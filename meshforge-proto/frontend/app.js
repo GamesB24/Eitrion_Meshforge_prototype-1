@@ -19,6 +19,7 @@ import { buildTestHead } from './testhead.js';
 import { geometryFromHead } from './progdraw.js';
 import { applyMaterialEvent, createProgramActions } from './progmat.js';
 import { initPlugins } from './plugins.js';
+import { installGameplay } from './gameplay.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { file: null, runner: 'local', shading: 'solid', wireOverlay: false, current: null, config: null };
@@ -134,6 +135,7 @@ function frameModel() {
 let viewLabel = 'User Perspective';
 function updateInfo() {
   refreshOutliner?.();
+  window.__mfRefreshActors?.();
   if (land?.active) return;
   let tris = 0; model?.traverse((o) => { if (o.isMesh && !o.userData.isOverlay) tris += Math.min(o.geometry.index ? o.geometry.index.count : o.geometry.attributes.position.count, o.geometry.drawRange.count) / 3; });
   const objs = model ? model.children.filter((o) => o.isMesh || o.children.length).length || 1 : 0;
@@ -144,7 +146,7 @@ function updateInfo() {
 }
 
 addEventListener('keydown', (e) => {
-  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT') return;
+  if (e.target.tagName === 'INPUT' || e.target.tagName === 'SELECT' || e.target.tagName === 'TEXTAREA') return;
   if (sculpt?.active && sculpt.handleKey(e)) return;
   if (!land?.active && editor.mode === 'object' && !e.ctrlKey && !e.metaKey && !e.altKey) {
     if (e.key === 'h' || e.key === 'H') { e.preventDefault(); e.shiftKey ? unhideAll() : hideSelected(); return; }
@@ -252,6 +254,7 @@ function setWorkspace(w) {
 }
 $('tabLand').onclick = () => setWorkspace('land'); $('tabGen').onclick = () => setWorkspace('gen');
 $('tabShader').onclick = () => setWorkspace('shader'); $('tabUV').onclick = () => setWorkspace('uv');
+$('tabScript').onclick = () => window.__mfOpenScript?.(editor.sel || model);
 window.MeshForgeLandscape = Object.assign(land, { setWorkspace });
 renderer.setAnimationLoop(() => { editor.tick(); sculpt.tick(); if (land?.active && state.shading === 'chibili') applyLandShading(); mats?.tick(); window.__mfTick?.(); controls.update(); renderer.render(scene, camera); drawGizmo(); });
 
@@ -510,6 +513,7 @@ function refreshOutliner() {
       if (e.target.classList.contains('eye')) { o.visible = !o.visible; if (!o.visible && editor.sel === o) editor.select(null); updateInfo(); return; }
       if (e.shiftKey) editor.select(o, { toggle: true }); else selectObject(o);
     };
+    li.ondblclick = (e) => { e.stopPropagation(); window.__mfOpenScript?.(o); };
     li.oncontextmenu = (e) => { e.preventDefault(); e.stopPropagation(); if (!editor.selection().includes(o)) editor.select(o); openObjectMenu(e, editor.selection()); };
   });
 }
@@ -570,6 +574,7 @@ function unhideAll() {
 }
 async function placeAsset(asset) {
   if (!asset) return null;
+  if (asset.kind === 'blueprint' || asset.blueprintId) return window.MeshForge.spawnActor?.({ blueprint: asset.blueprintId || asset.id, name: asset.name });
   const node = objectFromAsset(asset);
   node.userData.assetId = asset.id;
   node.traverse((o) => { if (o.isMesh) o.userData.assetId = asset.id; });
@@ -581,7 +586,7 @@ async function placeAsset(asset) {
   return node;
 }
 const objMenu = document.createElement('div'); objMenu.id = 'objMenu'; objMenu.className = 'objmenu'; objMenu.hidden = true;
-objMenu.innerHTML = '<button data-m="group">Group</button><button data-m="ungroup">Ungroup</button><button data-m="join">Join</button><button data-m="similar">Select Similar</button>';
+objMenu.innerHTML = '<button data-m="script">Edit Script</button><button data-m="collision">Edit Collision</button><button data-m="group">Group</button><button data-m="ungroup">Ungroup</button><button data-m="join">Join</button><button data-m="similar">Select Similar</button>';
 document.body.appendChild(objMenu);
 function openObjectMenu(e, list) {
   objMenu.hidden = false;
@@ -594,7 +599,9 @@ objMenu.onclick = (e) => {
   const act = e.target.dataset.m; if (!act) return;
   objMenu.hidden = true;
   const list = selectionMeshes();
-  if (act === 'group') doGroup(list);
+  if (act === 'script') window.__mfOpenScript?.(list[0]);
+  else if (act === 'collision') window.__mfOpenCollision?.(list[0]);
+  else if (act === 'group') doGroup(list);
   else if (act === 'ungroup') doUngroup(list);
   else if (act === 'join') doJoin(list);
   else if (act === 'similar') doSimilar(list[0]);
@@ -744,7 +751,7 @@ document.querySelectorAll('.menu [data-act]').forEach((b) => b.onclick = () => {
 // scene.json: persist the material library and per-object slots; honour room.camera
 const _exportScene = window.MeshForge.exportScene;
 function withMaterials(m) { m.generator = 'MeshForge 8.0'; m.materials = mats.libJSON(); m.chibili = { ...CHIBILI };
-  m.objects.forEach((o) => { const x = sceneObjects().find((y) => y.userData.sceneId === o.id); if (x?.userData.mf) { o.materials = x.userData.mf.slots.slice(); if (x.userData.mf.tex) o.texture = { ...x.userData.mf.tex }; } }); return m; }
+  m.objects.forEach((o) => { const x = sceneObjects().find((y) => y.userData.sceneId === o.id); if (x?.userData.mf) { o.materials = x.userData.mf.slots.slice(); if (x.userData.mf.tex) o.texture = { ...x.userData.mf.tex }; } window.__mfStampObject?.(o, x); }); return m; }
 window.MeshForge.exportScene = () => withMaterials(_exportScene());
 const _bundle = exportBundle;
 window.MeshForge.exportSceneBundle = async () => { const b = await _bundle(); withMaterials(b.manifest); return b; };
@@ -853,6 +860,7 @@ async function buildProjectBlob() {
     { name: 'scene.json', data: new TextEncoder().encode(JSON.stringify(bundle.manifest, null, 2)) },
     { name: 'scene.glb', data: new Uint8Array(await bundle.glb.arrayBuffer()) },
     { name: 'materials.json', data: new TextEncoder().encode(JSON.stringify(bundle.manifest.materials || [])) },
+    { name: 'scripts.json', data: new TextEncoder().encode(JSON.stringify(window.MeshForge.exportScriptLibrary?.() || { version: 1, scripts: [], blueprints: [] }, null, 2)) },
   ];
   return new Blob([makeZip(files)], { type: 'application/zip' });
 }
@@ -862,6 +870,9 @@ async function openProjectBytes(buf) {
   const url = URL.createObjectURL(new Blob([files['scene.glb']], { type: 'model/gltf-binary' }));
   await new Promise((res, rej) => loadGLB(url, res, rej, { label: 'Open project', source: 'project', name: 'Project' }));
   URL.revokeObjectURL(url);
+  if (files['scripts.json']) {
+    try { window.__mfLoadScripts?.(JSON.parse(new TextDecoder().decode(files['scripts.json']))); } catch { /* scripts are optional */ }
+  }
   if (files['scene.json']) {
     try { window.__mfAfterSceneLoad?.(JSON.parse(new TextDecoder().decode(files['scene.json']))); } catch { /* manifest is optional for the mesh */ }
   }
@@ -1074,6 +1085,49 @@ Object.assign(window.MeshForge, programActions, {
   actions: agentActions,
 });
 const dock = document.createElement('div'); dock.id = 'contentDock'; vp.appendChild(dock); mountBrowser(dock);
+const playHost = installGameplay({
+  THREE, scene, editor, land, mats,
+  getModel: () => model,
+  status: (m) => { $('progMsg').textContent = m; },
+  updateInfo, ensureScene, addUndoable, findSceneNode, sceneObjects,
+  pushHistory: (entry) => editor.pushHistory(entry),
+  autosave: (reason) => recover?.write(reason || 'script'),
+  applyShading,
+  buildProject: buildProjectBlob,
+  generateLandscape: (opts) => agentActions.generateLandscape(opts?.seed),
+  sendLandscape: () => sendLandscapeToScene(),
+  programActions,
+});
+Object.assign(agentActions, playHost.api);
+Object.assign(window.MeshForge, playHost.api);
+window.__mfLoadScripts = playHost.api.loadScriptLibrary;
+window.__mfStampObject = (entry, node) => {
+  if (!entry || !node) return;
+  if (node.userData.actor) entry.actor = node.userData.actor;
+  if (node.userData.scriptSource) entry.script = node.userData.scriptSource;
+  const mesh = node.isMesh ? node : node.children?.find((child) => child.isMesh);
+  if (mesh?.userData?.collision) entry.collision = JSON.parse(JSON.stringify(mesh.userData.collision));
+};
+{
+  const prevAfter = window.__mfAfterSceneLoad;
+  window.__mfAfterSceneLoad = (man) => {
+    prevAfter?.(man);
+    for (const rec of man?.objects || []) {
+      const node = findSceneNode(rec.id) || findSceneNode(rec.label) || findSceneNode(rec.name) || findSceneNode(rec.node);
+      playHost.api.applyActorRecord(node, rec);
+    }
+  };
+  const prevTick = window.__mfTick;
+  let lastPlay = performance.now();
+  window.__mfTick = () => {
+    prevTick?.();
+    const now = performance.now();
+    const dt = Math.min(0.05, (now - lastPlay) / 1000);
+    lastPlay = now;
+    playHost.tick(dt);
+  };
+}
+canvas.addEventListener('dblclick', () => { if (editor.mode === 'object' && editor.sel) window.__mfOpenScript?.(editor.sel); });
 Object.assign(ACTIONS, {
   saveproj: () => recover.save(), saveas: () => recover.saveAs(), autosave: () => recover.chooseFolder(),
   openproj: () => { const input = document.createElement('input'); input.type = 'file'; input.accept = '.mfproj,.glb,.gltf,.obj,.json'; input.onchange = async () => { const f = input.files[0]; if (!f) return; if (/\.mfproj$/i.test(f.name)) await openProjectBytes(await f.arrayBuffer()); else $('sceneFile').onchange({ target: { files: [f], value: '' } }); }; input.click(); },
