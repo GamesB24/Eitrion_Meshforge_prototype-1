@@ -24,7 +24,7 @@ r = generate_mesh(
     formats=("glb", "obj"),
     foreground_ratio=0.85,   # object size in frame after recentring (0.3..1.0)
     seed=None,
-    runner="local",          # extra: "cloud" uses MESHFORGE_CLOUD (default "mock" = free demo mesh, no GPU)
+    runner="local",          # extra: "cloud" uses MESHFORGE_CLOUD (unset fails; "mock" is an explicit demo mesh)
     progress=None,           # extra: callback(fraction, message)
 )
 if r["ok"]:

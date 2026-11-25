@@ -211,4 +211,7 @@ body.pluginActive .props>:not(.plugin-left-panel){display:none}
 .ae-side{display:flex;flex-direction:column;gap:6px;overflow:auto}
 .ae-shape{border-top:1px solid #444;padding-top:4px}
 #aeView{width:100%;height:100%;background:#1b1d22;border-radius:6px}
-#actorDetails select{background:#333;color:#ddd;border:1px solid #555}
+#actorDetails select,#actorDetails .comp-row input{background:#333;color:#ddd;border:1px solid #555}
+#actorDetails .comp-sec{border-top:1px solid #444;margin-top:6px;padding-top:4px}
+#actorDetails .comp-row{border-top:1px solid #3a3a3a;margin-top:4px;padding-top:4px}
+#actorDetails .comp-row .txt{width:100%}

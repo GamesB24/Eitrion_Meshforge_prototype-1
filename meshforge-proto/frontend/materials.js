@@ -430,10 +430,15 @@ export function createMaterials(ctx) {
   async function buildDraft(payload) {
     const session = window.MeshForge?.agentSession;
     if (!session?.connected?.()) return { ok: false, error: 'No AI provider is connected. Open the Agent tab and connect a provider. You can still edit the GLSL and the parameters by hand.' };
+    const bus = window.MeshForge?.bus;
+    if (!bus?.emit) return { ok: false, error: 'No material builder is connected. Materials ask the event bus, not a server address.' };
     try {
-      const res = await fetch('/api/plugins/ai-agent/material', { method: 'POST', headers: { ...(session.headers?.() || {}), 'Content-Type': 'application/json' }, body: JSON.stringify({ provider: session.provider?.() || '', base: session.base?.() || '', model: session.model?.() || '', brief: payload.brief || '', images: payload.images || [], previous: payload.previous || null }) });
-      const data = await res.json();
-      if (!data.ok || !data.spec) return { ok: false, error: data.message || data.error || 'The AI did not return a material', errors: data.errors || [] };
+      const replies = await Promise.all(bus.emit('ai:material', {
+        provider: session.provider?.() || '', base: session.base?.() || '', model: session.model?.() || '',
+        brief: payload.brief || '', images: payload.images || [], previous: payload.previous || null,
+      }).map((reply) => Promise.resolve(reply)));
+      const data = replies.find((reply) => reply && typeof reply === 'object') || null;
+      if (!data?.ok || !data.spec) return { ok: false, error: data?.message || data?.error || 'No material builder is connected. Materials ask the event bus, not a server address.', errors: data?.errors || [] };
       const { validateSpec } = await import('./progmat.js');
       const checked = validateSpec(data.spec, { brief: payload.brief, images: payload.images });
       if (!checked.ok) return { ok: false, error: checked.errors[0], errors: checked.errors };

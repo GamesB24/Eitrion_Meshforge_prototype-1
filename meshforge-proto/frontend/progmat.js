@@ -813,9 +813,16 @@ export function createProgramActions(deps) {
       if (!spec) {
         const session = deps.session?.();
         if (!session?.connected?.()) return { ok: false, error: NO_AI };
+        const body = { provider: session.provider?.() || '', base: session.base?.() || '', model: session.model?.() || '', brief: opts.brief || '', images: opts.images || [], previous: opts.previous || null };
         let data;
-        try { data = await deps.post?.({ provider: session.provider?.(), base: session.base?.(), model: session.model?.(), brief: opts.brief || '', images: opts.images || [], previous: opts.previous || null }); }
-        catch { return { ok: false, error: 'Network error' }; }
+        try {
+          if (deps.post) data = await deps.post(body);
+          else if (deps.bus?.emit) {
+            const replies = await Promise.all(deps.bus.emit('ai:material', body).map((reply) => Promise.resolve(reply)));
+            data = replies.find((reply) => reply && typeof reply === 'object') || null;
+          } else return { ok: false, error: 'No material builder is connected. Materials ask the event bus, not a server address.' };
+        } catch { return { ok: false, error: 'Network error' }; }
+        if (!data) return { ok: false, error: 'No material builder is connected. Materials ask the event bus, not a server address.' };
         if (!data?.ok || !data.spec) return { ok: false, error: data?.message || data?.error || 'The AI did not return a material', errors: data?.errors || [] };
         const validated = validateSpec(data.spec, { brief: opts.brief, images: opts.images });
         if (!validated.ok) return { ok: false, error: validated.errors[0], errors: validated.errors };

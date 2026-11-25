@@ -54,7 +54,7 @@ def generate_mesh(image_path, out_dir, *, engine="triposr", device="auto", remov
     formats         subset of ("glb","obj"); both are always written, unrequested ones are just not reported
     foreground_ratio  object size within the frame after recentring (0.5-1.0)
     seed            int or None; TripoSR is deterministic in practice, seed only fixes RNGs
-    runner          "local" (in-process) or "cloud" (MESHFORGE_CLOUD adapter; default "mock" = demo mesh, free)
+    runner          "local" (in-process) or "cloud" (MESHFORGE_CLOUD; unset fails, "mock" is an explicit demo mesh)
     progress        optional callback(fraction 0..1, message)
     Returns {ok, glb, obj, raw_glb, processed_png, out_dir, stats:{vertices,triangles,seconds,device,...}, error}.
     """
@@ -136,7 +136,8 @@ def generate_mesh(image_path, out_dir, *, engine="triposr", device="auto", remov
         r["obj"] = str(out / "mesh.obj") if "obj" in fmts else None
         r["raw_glb"] = str(out / "raw.glb") if stats.get("raw") and (out / "raw.glb").is_file() else None
         r["processed_png"] = str(out / "processed.png")
-        dev = RUNNERS["local"].device if runner == "local" else f"cloud:{RUNNERS['cloud'].adapter.name}"
+        adapter = getattr(RUNNERS["cloud"], "adapter", None)
+        dev = RUNNERS["local"].device if runner == "local" else f"cloud:{getattr(adapter, 'name', 'unconfigured')}"
         r["stats"] = {"vertices": stats.get("vertices", 0), "triangles": _triangles(out / "mesh.glb", stats),
                       "quads": stats.get("quads"), "parts": stats.get("parts"), "seconds": round(time.time() - t0, 2),
                       "device": dev, "engine": engine, "runner": runner, "had_alpha": alpha,

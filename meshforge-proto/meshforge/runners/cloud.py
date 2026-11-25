@@ -1,6 +1,7 @@
 """Cloud GPU adapters. Credentials come only from environment variables; nothing is stored.
 
-  MESHFORGE_CLOUD=mock    (default) fake job, returns a demo multi-part mesh; for UI demos, costs nothing
+  MESHFORGE_CLOUD unset   Refuses the job. Does not invent a mesh.
+  MESHFORGE_CLOUD=mock    Explicit test flag. Returns a demo multi-part mesh. Not a production default.
   MESHFORGE_CLOUD=modal   Modal serverless GPU (see cloud/modal_app.py). UNTESTED - needs `pip install modal`,
                           `modal token new` (or MODAL_TOKEN_ID / MODAL_TOKEN_SECRET) and `modal deploy cloud/modal_app.py`.
   MESHFORGE_CLOUD=remote  Another MeshForge server on a GPU box you own/rent, usually through an SSH tunnel:
@@ -9,9 +10,6 @@
 from __future__ import annotations
 import os, time
 from pathlib import Path
-import numpy as np
-import requests
-import trimesh
 from .base import Runner, png_bytes, glb_to_parts
 
 
@@ -25,6 +23,8 @@ class MockAdapter(CloudAdapter):
     name = "mock"
 
     def generate(self, engine_id, png, params, progress):
+        import numpy as np
+        import trimesh
         for i, msg in enumerate(["Queued on cloud (mock)", "Cold start (mock)", "Generating (mock)", "Downloading result (mock)"]):
             progress(0.2 + 0.13 * i, msg); time.sleep(0.6)
         body = trimesh.creation.capsule(height=1.0, radius=0.35); body.visual.vertex_colors = [180, 140, 90, 255]
@@ -74,6 +74,7 @@ class RemoteServerAdapter(CloudAdapter):
         return (bool(self.url), "" if self.url else "Set MESHFORGE_REMOTE_URL")
 
     def generate(self, engine_id, png, params, progress):
+        import requests
         form = {"engine": engine_id, "runner": "local", "remove_bg": "false",
                 "params": __import__("json").dumps({**params, "postprocess": False})}
         r = requests.post(f"{self.url}/api/jobs", files={"image": ("in.png", png, "image/png")}, data=form, timeout=30)
@@ -89,21 +90,54 @@ class RemoteServerAdapter(CloudAdapter):
 
 ADAPTERS = {"mock": MockAdapter, "modal": ModalAdapter, "remote": RemoteServerAdapter}
 
+UNCONFIGURED = (
+    "Cloud runner is not configured. Set MESHFORGE_CLOUD=modal or MESHFORGE_CLOUD=remote. "
+    "A demo mesh is returned only when MESHFORGE_CLOUD=mock is set explicitly. "
+    "Refusing to invent a placeholder mesh."
+)
+
+
+class UnconfiguredAdapter(CloudAdapter):
+    """Fails the job. This is the default when MESHFORGE_CLOUD is missing or unknown."""
+
+    def __init__(self, reason: str):
+        self.name = "unconfigured"
+        self.reason = reason
+
+    def ready(self):
+        return False, self.reason
+
+    def generate(self, engine_id, png, params, progress):
+        raise RuntimeError(self.reason)
+
 
 class CloudRunner(Runner):
     id, label = "cloud", "Cloud GPU"
 
     def __init__(self):
-        name = os.environ.get("MESHFORGE_CLOUD", "mock")
-        self.adapter = ADAPTERS[name]()
+        raw = os.environ.get("MESHFORGE_CLOUD", "")
+        name = raw.strip().lower()
+        self.requested = name
+        if name == "mock":
+            self.adapter = MockAdapter()
+        elif name in ADAPTERS:
+            self.adapter = ADAPTERS[name]()
+        elif not name:
+            self.adapter = UnconfiguredAdapter(UNCONFIGURED)
+        else:
+            self.adapter = UnconfiguredAdapter(
+                f"Unknown MESHFORGE_CLOUD={raw!r}. Use modal, remote, or mock. "
+                "Refusing to invent a placeholder mesh."
+            )
 
     def status(self):
         ok, why = self.adapter.ready()
         return {"id": self.id, "label": self.label, "ready": ok, "adapter": self.adapter.name, "hint": why,
+                "explicit_mock": self.adapter.name == "mock",
                 "untested": self.adapter.name in ("modal",)}
 
     def run(self, engine_id, image, params, progress):
         ok, why = self.adapter.ready()
         if not ok:
-            raise RuntimeError(f"Cloud adapter '{self.adapter.name}' not configured: {why}")
+            raise RuntimeError(why or UNCONFIGURED)
         return glb_to_parts(self.adapter.generate(engine_id, png_bytes(image), params, progress))

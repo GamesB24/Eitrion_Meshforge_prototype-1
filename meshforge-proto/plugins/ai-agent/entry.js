@@ -188,6 +188,62 @@ export async function activate(mf) {
     base: () => q('#aiBase').value.trim(),
     headers: () => mf.secrets.header('Provider'),
   };
+  const bus = mf.api.bus;
+  if (bus?.on) {
+    bus.on('ai:material', (body) => pluginPost(mf, 'material', body));
+    bus.on('ai:script', (body) => pluginPost(mf, 'script', body));
+    bus.on('ai:brain', (body) => brainCommand(mf, body));
+  }
+}
+
+async function pluginPost(mf, path, body) {
+  try {
+    const res = await mf.backend(path, {
+      method: 'POST',
+      headers: { ...mf.secrets.header('Provider'), 'Content-Type': 'application/json' },
+      body: JSON.stringify(body || {}),
+    });
+    return await res.json();
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
+}
+
+function commandFromText(text) {
+  const raw = String(text || '').trim();
+  if (!raw) return null;
+  const fenced = raw.match(/\{[\s\S]*\}/);
+  if (!fenced) return null;
+  try { return JSON.parse(fenced[0]); } catch { return null; }
+}
+
+async function brainCommand(mf, req) {
+  const session = mf.api.agentSession;
+  if (!session?.connected?.()) return { ok: false, error: 'No AI provider is connected' };
+  const allowed = 'move, face, say, idle, setMaterialState, setMaterialParam, emit, transform_object, setCollision, listActors';
+  try {
+    const res = await mf.backend('chat', {
+      method: 'POST',
+      headers: { ...mf.secrets.header('Provider'), 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        provider: session.provider(),
+        base: session.base(),
+        model: session.model(),
+        messages: [
+          { role: 'system', content: 'You drive one actor during Play. Reply with one JSON object only, with an op field. op must be one of: ' + allowed + '. Do not write code, scripts, or JavaScript. Do not call tools.' },
+          { role: 'user', content: JSON.stringify({ goal: req?.goal || '', actor: req?.actor || null }).slice(0, 4000) },
+        ],
+        tools: [],
+      }),
+    });
+    const data = await res.json();
+    if (!data?.ok) return { ok: false, error: data?.message || 'Network error' };
+    const command = commandFromText(data.text) || (data.tool_calls?.[0] ? { op: data.tool_calls[0].name, ...(data.tool_calls[0].arguments || {}) } : null);
+    if (!command) return { ok: false, error: 'The provider did not return a command' };
+    return { ok: true, command };
+  } catch {
+    return { ok: false, error: 'Network error' };
+  }
 }
 
 export function deactivate() {}
