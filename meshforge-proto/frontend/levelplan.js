@@ -3,6 +3,7 @@
 // Original MIT code.
 
 import { blankActor, blankBlueprint, instanceFromBlueprint, isActorType, normaliseActor, publicActor } from './actors.js';
+import { landscapeSendScale } from './playrules.js';
 import { createPlayWorld } from './playworld.js';
 import { templateSource, validateScript } from './scriptbox.js';
 
@@ -34,6 +35,7 @@ export function createMemoryForge() {
       type: row.actor.type,
       spawn: !!row.actor.spawn,
       tags: row.actor.tags.slice(),
+      team: row.actor.team || null,
       position: row.position.slice(),
       rotation: row.rotation.slice(),
       scale: row.scale.slice(),
@@ -82,16 +84,18 @@ export function createMemoryForge() {
     return { ok: true, seed };
   }
 
-  function sendLandscapeToScene() {
-    if (actors.some((a) => a.kind === 'landscape')) return { ok: true, id: actors.find((a) => a.kind === 'landscape').id, note: 'already sent' };
+  function sendLandscapeToScene(opts = {}) {
+    const existing = actors.find((a) => a.kind === 'landscape');
+    if (existing) return { ok: true, id: existing.id, scale: existing.scale[0], size: landscape.size * existing.scale[0], note: 'already sent' };
+    const scale = landscapeSendScale(landscape.size, opts);
     const row = {
-      id: nid('landscape'), name: 'Landscape', kind: 'landscape', position: [0, 0, 0], rotation: [0, 0, 0], scale: [1, 1, 1],
-      actor: normaliseActor({ type: 'level', tags: ['landscape'] }),
-      collision: { enabled: true, preset: 'BlockAll', type: 'complex', size: [landscape.size / 2, 1, landscape.size / 2] },
+      id: nid('landscape'), name: 'Landscape', kind: 'landscape', position: [0, 0, 0], rotation: [0, 0, 0], scale: [scale, scale, scale],
+      actor: normaliseActor({ type: 'static', tags: ['landscape'] }),
+      collision: { enabled: true, preset: 'BlockAll', type: 'complex', size: [landscape.size * scale / 2, 1, landscape.size * scale / 2] },
       script: '',
     };
     remember('Send landscape', () => { const i = actors.findIndex((a) => a.id === row.id); if (i >= 0) actors.splice(i, 1); landscape.sent = false; }, () => { actors.push(row); landscape.sent = true; });
-    return { ok: true, id: row.id };
+    return { ok: true, id: row.id, scale, size: landscape.size * scale };
   }
 
   function placePrimitive(spec = {}) {
@@ -162,13 +166,19 @@ export function createMemoryForge() {
   }
 
   function addSpawn(spec = {}) {
+    const tags = ['spawn'];
+    if (spec.team) tags.push('team:' + String(spec.team));
     const made = placePrimitive({
       kind: 'spawn', name: spec.name || 'Spawn', position: spec.position || [0, 0, 0],
-      actorType: 'static', tags: ['spawn'], collision: { enabled: false, preset: 'NoCollision', type: 'none', size: [0.3, 0.3, 0.3] },
+      actorType: 'static', tags, collision: { enabled: false, preset: 'NoCollision', type: 'none', size: [0.3, 0.3, 0.3] },
     });
     const row = find(made.id);
-    if (row) row.actor.spawn = true;
-    return { ok: true, id: made.id, name: spec.name || 'Spawn', spawn: true };
+    if (row) {
+      row.actor.spawn = true;
+      row.actor.team = spec.team ? String(spec.team) : null;
+      row.actor.tags = tags.slice();
+    }
+    return { ok: true, id: made.id, name: spec.name || 'Spawn', spawn: true, team: row?.actor.team || null, tags };
   }
 
   function createBlueprint(spec = {}) {

@@ -3,6 +3,7 @@
 // Stop puts every transform back and removes actors that appeared during Play.
 
 import { normaliseActor } from './actors.js';
+import { isOverlapTarget } from './playrules.js';
 import { createSession } from './scriptbox.js';
 
 function clone(v) { return JSON.parse(JSON.stringify(v)); }
@@ -205,7 +206,7 @@ export function createPlayWorld() {
       session.tickTimers(step);
       for (const cmd of session.call('onUpdate', [step])) apply(actor, cmd);
     }
-    const live = list().filter((a) => !a.dead);
+    const live = list().filter((a) => !a.dead && isOverlapTarget({ type: a.type, name: a.name, source: a.kind, isScene: a.type === 'level' && a.kind === 'level' }));
     const now = new Set();
     for (let i = 0; i < live.length; i++) {
       for (let j = i + 1; j < live.length; j++) {

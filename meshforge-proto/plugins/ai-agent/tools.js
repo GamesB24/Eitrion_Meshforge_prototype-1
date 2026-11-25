@@ -18,7 +18,7 @@ export const TOOLS = [
   { name: 'set_camera', description: 'Set the camera position, target, and optional fov.', parameters: { type: 'object', properties: { position: { type: 'array' }, target: { type: 'array' }, fov: { type: 'number' } } } },
   { name: 'landscape_generate', description: 'Randomise the landscape. One undo step.', parameters: { type: 'object', properties: { seed: { type: 'number' } } } },
   { name: 'landscape_params', description: 'Change landscape numbers such as water level or tree count.', parameters: { type: 'object', properties: { patch: { type: 'object' } }, required: ['patch'] } },
-  { name: 'send_landscape', description: 'Copy the landscape into the level as a group. One undo step.', parameters: obj },
+  { name: 'send_landscape', description: 'Copy the landscape into the level at its world size. Optional scale or size in metres. One undo step.', parameters: { type: 'object', properties: { scale: { type: 'number' }, size: { type: 'number' }, position: { type: 'array' } } } },
   { name: 'decimate', description: 'Reduce triangles on one mesh. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, target: { type: 'number' } }, required: ['target'] } },
   { name: 'retopo', description: 'Retopologise one mesh. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, target: { type: 'number' } } } },
   { name: 'snap_to_floor', description: 'Drop objects onto a floor height. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, floorY: { type: 'number' } } } },
@@ -52,7 +52,10 @@ export const TOOLS = [
   { name: 'setLandscapeSize', description: 'Set the landscape square size in metres and an optional height. Depth uses the same edge as width. One undo step.', parameters: { type: 'object', properties: { width: { type: 'number' }, depth: { type: 'number' }, height: { type: 'number' } } } },
   { name: 'placePrimitive', description: 'Place a cube, sphere, capsule, plane, building, or spawn. Sets actor type, scale, position, and collision. One undo step.', parameters: { type: 'object', properties: { kind: { type: 'string' }, name: { type: 'string' }, position: { type: 'array' }, scale: { type: 'array' }, rotation: { type: 'array' }, actorType: { type: 'string' }, collision: { type: 'object' } }, required: ['kind'] } },
   { name: 'setCollision', description: 'Set collision on an actor. preset is BlockAll, OverlapAll, NoCollision, Pawn, or Water. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, preset: { type: 'string' }, type: { type: 'string' }, enabled: { type: 'boolean' } }, required: ['id'] } },
-  { name: 'addSpawn', description: 'Add a spawn point actor. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, position: { type: 'array' } } } },
+  { name: 'addSpawn', description: 'Add a spawn point actor. Optional team is saved on the actor and listed. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, position: { type: 'array' }, team: { type: 'string' } } } },
+  { name: 'openProject', description: 'Open a .mfproj from a url. Actors, scripts, collision and transforms are restored.', parameters: { type: 'object', properties: { url: { type: 'string' } }, required: ['url'] } },
+  { name: 'setCameraClip', description: 'Set the camera near and far planes in metres.', parameters: { type: 'object', properties: { near: { type: 'number' }, far: { type: 'number' } } } },
+  { name: 'getGroundHeight', description: 'Height of the terrain at x, z.', parameters: { type: 'object', properties: { x: { type: 'number' }, z: { type: 'number' } }, required: ['x', 'z'] } },
   { name: 'saveProject', description: 'Save the open level as a .mfproj file on this computer.', parameters: { type: 'object', properties: { path: { type: 'string' } }, required: ['path'] } },
 ];
 
@@ -134,8 +137,8 @@ export async function runTool(ctx, name, args = {}) {
       return { ok: !!r.ok, summary: summary('updated landscape settings'), text: JSON.stringify(r) };
     }
     if (name === 'send_landscape') {
-      const r = await api.sendLandscapeToScene();
-      return { ok: !!r, summary: summary('sent the landscape into the level'), text: JSON.stringify(r) };
+      const r = await api.sendLandscapeToScene({ scale: args.scale, size: args.size, position: args.position });
+      return { ok: !!r?.ok || !!r?.id, summary: summary(r?.id ? `sent the landscape (scale ${r.scale ?? 1})` : 'could not send the landscape'), text: JSON.stringify(r) };
     }
     if (name === 'decimate') {
       const r = await actions.decimate(args.id, args.target);
@@ -292,6 +295,18 @@ export async function runTool(ctx, name, args = {}) {
     if (name === 'saveProject') {
       const r = await actions.saveProject?.(args.path) || { ok: false, error: 'No save API' };
       return { ok: !!r.ok, summary: summary(r.ok ? `saved ${r.path}` : (r.error || 'could not save')), text: JSON.stringify(r) };
+    }
+    if (name === 'openProject') {
+      const r = await (api.openProject || actions.openProject)?.(args.url) || { ok: false, error: 'Open is not ready' };
+      return { ok: !!r.ok, summary: summary(r.ok ? 'opened the project' : (r.error || 'could not open')), text: JSON.stringify(r) };
+    }
+    if (name === 'setCameraClip') {
+      const r = (api.setCameraClip || actions.setCameraClip)?.({ near: args.near, far: args.far }) || { ok: false, error: 'Camera clip is not ready' };
+      return { ok: r.far != null, summary: summary(r.far != null ? `camera far ${r.far}` : 'could not set the clip'), text: JSON.stringify(r) };
+    }
+    if (name === 'getGroundHeight') {
+      const y = (api.getGroundHeight || actions.getGroundHeight)?.(args.x, args.z);
+      return { ok: Number.isFinite(+y), summary: summary(Number.isFinite(+y) ? `ground height ${y}` : 'no ground'), text: JSON.stringify({ y }) };
     }
   } catch (err) {
     return { ok: false, summary: summary('action failed'), text: String(err.message || err).slice(0, 300) };

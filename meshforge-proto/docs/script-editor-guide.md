@@ -124,6 +124,14 @@ On Windows, start `run_windows.bat` first so that address is open. Copy the file
 
 `saveProject` needs a path ending in `.mfproj` and the MeshForge server, because the file is written on that computer. The zip holds `scene.json`, `scene.glb`, `materials.json`, and `scripts.json`.
 
+File ▸ Open reads that zip back as separate actors. It does not squash the level into one small mesh. `MeshForge.openProject(bytes or url)` does the same thing. Scripts are stored against the actor's saved id, including the level, whose id stays `level`.
+
+`sendLandscapeToScene` keeps the landscape's real size. Pass `scale` or `size` when you want a different one. It no longer shrinks a large map to sit beside a small prop. The camera far plane starts at 2000 m and grows with the scene. `setCameraClip({ near, far })` sets it directly. `getGroundHeight(x, z)` reads the terrain. In Play, a Character stands on that height instead of falling to zero.
+
+A spawn can carry a team: `addSpawn({ name, position, team: 'red' })`. The team is saved and shows up in `listActors`. `setScript` and `setCollision` return an error when the id does not match an actor. They do not write onto the whole level by mistake.
+
+Overlap events skip the Level actor and any mesh named Terrain or Water, so a ground plane does not count as touching every prop. Assigned materials stay visible in solid view, not only in the toon view. Matcap and wire use the material colour too.
+
 ## 6. Safety and limits
 
 A script is gameplay code, not a plugin. Plugins are trusted and are not sandboxed. Scripts are.
@@ -151,7 +159,7 @@ These are the shortcuts the program actually handles. They were taken from the k
 
 The camera code contains arrow-key panning, but MeshForge never turns that listener on. During Play the arrows move the Character instead. They do not pan the view.
 
-The on-screen help mentions Ctrl plus a numpad view key for the opposite side. The handler returns before that branch, so Ctrl+Numpad does not snap the opposite view. Click the far ball on the corner axis widget instead.
+Ctrl or Cmd with Numpad 1, 3, or 7 (or the matching top-row key) snaps the opposite view: back, left, or bottom. The corner axis widget does the same when you click the far ball.
 
 ### Global
 
@@ -161,9 +169,9 @@ The on-screen help mentions Ctrl plus a numpad view key for the opposite side. T
 | Ctrl+Shift+Z or Cmd+Shift+Z | Redo |
 | Ctrl+Y or Cmd+Y | Redo |
 | Click a ball on the corner axis widget | Snap the view to that side, including back, left, and bottom |
-| Numpad 1, or the 1 key outside Edit Mode | Front view |
-| Numpad 3, or the 3 key outside Edit Mode | Right view |
-| Numpad 7, or the 7 key outside Edit Mode | Top view |
+| Numpad 1, or the 1 key outside Edit Mode | Front view. Ctrl or Cmd shows the back |
+| Numpad 3, or the 3 key outside Edit Mode | Right view. Ctrl or Cmd shows the left |
+| Numpad 7, or the 7 key outside Edit Mode | Top view. Ctrl or Cmd shows the bottom |
 | Numpad 5, or the 5 key outside Sculpt Mode | Perspective / orthographic |
 | Numpad decimal, period, or Home | Frame the selection |
 | Z, when you are not mid-transform | Wireframe / solid |

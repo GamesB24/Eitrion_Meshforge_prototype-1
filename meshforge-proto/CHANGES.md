@@ -1,3 +1,9 @@
+# Script editor fixes
+
+Opening a `.mfproj` restores separate actors, transforms, materials, collision, and scripts. It no longer merges the level into one rescaled mesh. `MeshForge.openProject(bytes|url)` does that open. Scripts, including the level script, are stored on a stable actor id (`level` for the scene).
+
+Play no longer posts functions to the Worker, so the clone error on every frame is gone. Overlap events skip the Level actor and terrain or water meshes. Characters follow terrain height. The camera far plane defaults to 2000 m and grows with the scene (`setCameraClip`). `sendLandscapeToScene` keeps world size unless `scale` or `size` is passed. `getGroundHeight(x, z)` reads the terrain. Unknown ids on `setScript` and `setCollision` return an error. Spawn points accept a `team` tag. Basic materials show in solid, matcap, and wire, not only the toon view. Ctrl+Numpad 1/3/7 snaps the opposite view.
+
 # Script editor
 
 Every scene object is an actor: Static, Character, NPC/AI, or Level. A blueprint is an asset in the content browser. Placing it makes an actor that inherits the blueprint and can override the script. Gameplay scripts are JavaScript with lifecycle hooks. They run in a Worker during Play and only see a small whitelist (`api`). The script editor is a dockable window with a tab per script, a simple highlighter, Validate, a console, templates, and Ask AI. Programmable materials open in the same window as GLSL plus their parameters. Projects (`.mfproj`) now also store `scripts.json`. An external agent can list and set scripts, make blueprints, place actors, set collision, run Play, and save. See docs/script-editor-guide.md.

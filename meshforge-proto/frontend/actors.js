@@ -24,6 +24,7 @@ export function blankActor(type = 'static') {
     spawn: false,
     tags: [],
     overrides: [],
+    team: null,
   };
 }
 
@@ -37,6 +38,9 @@ export function normaliseActor(raw, fallback = 'static') {
   base.spawn = !!raw.spawn;
   base.tags = Array.isArray(raw.tags) ? raw.tags.map((t) => String(t)).slice(0, 16) : [];
   base.overrides = Array.isArray(raw.overrides) ? raw.overrides.map((k) => String(k)) : [];
+  const tagged = base.tags.find((t) => t.startsWith('team:'));
+  base.team = raw.team ? String(raw.team) : (tagged ? tagged.slice(5) : null);
+  if (base.team && !base.tags.includes('team:' + base.team)) base.tags.push('team:' + base.team);
   return base;
 }
 
@@ -100,5 +104,6 @@ export function publicActor(actor) {
     spawn: row.spawn,
     tags: row.tags.slice(),
     overrides: row.overrides.slice(),
+    team: row.team,
   };
 }

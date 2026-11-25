@@ -2,6 +2,7 @@
 // Original MIT code. The Worker runs gameplay scripts. The page only applies the command list.
 import { createAssetEditor } from './asset_editor.js';
 import { normaliseActor, blankBlueprint, instanceFromBlueprint, isActorType, publicActor, ACTOR_LABELS } from './actors.js';
+import { isOverlapTarget, plainActorRef } from './playrules.js';
 import { setBrowserExtras, onAssetActivate, onAssetCommand } from './content.js';
 import {
   createCollisionDebug, ensureAll, ensureCollision, moveActor, publicCollision, setCollision,
@@ -89,7 +90,11 @@ export function installGameplay(ctx) {
     col.querySelector('input').onchange = (e) => collisionView.set(e.target.checked, ctx.getModel());
   }
 
-  function idOf(obj) { return obj?.userData?.sceneId || obj?.uuid || ''; }
+  function idOf(obj) {
+    if (!obj) return '';
+    if (obj.userData?.isScene && !obj.userData.sceneId) obj.userData.sceneId = 'level';
+    return obj.userData?.sceneId || obj.uuid || '';
+  }
   function guessType(obj) {
     if (obj?.userData?.isScene) return 'level';
     const name = String(obj?.name || '').toLowerCase();
@@ -104,9 +109,13 @@ export function installGameplay(ctx) {
     return obj.userData.actor;
   }
   function resolve(id) {
-    if (!id) return ctx.editor.sel || ctx.getModel();
-    if (id === 'level' || id === ctx.getModel()?.uuid) return ctx.getModel();
-    return ctx.findSceneNode(id) || ctx.getModel();
+    if (id == null || id === '') return ctx.editor.sel || null;
+    if (id === 'level') return ctx.getModel() || null;
+    const node = ctx.findSceneNode(id);
+    if (node) return node;
+    const root = ctx.getModel();
+    if (root && (root.userData?.sceneId === id || root.uuid === id)) return root;
+    return null;
   }
   function eachNode(fn) {
     const root = ctx.getModel();
@@ -309,29 +318,50 @@ export function installGameplay(ctx) {
       const feet = obj.position.clone();
       const moved = moveActor(obj, feet, delta, meshes);
       obj.position.copy(moved.position);
-      if (input.jump && obj.position.y <= 0.05) obj.position.y = 1.1;
-      else if (!input.jump && obj.position.y > 0 && actorOf(obj).type === 'character') obj.position.y = Math.max(0, obj.position.y - 5 * dt);
+      const ground = ctx.groundHeight?.(obj.position.x, obj.position.z);
+      const floorY = Number.isFinite(+ground) ? +ground : 0;
+      if (input.jump && obj.position.y <= floorY + 0.05) obj.position.y = floorY + 1.1;
+      else if (!input.jump && obj.position.y > floorY + 0.02) obj.position.y = Math.max(floorY, obj.position.y - 8 * dt);
+      else obj.position.y = floorY;
     }
-  }
-  function worldBox(obj) {
-    const box = new THREE.Box3();
-    if (obj.isMesh || obj.isGroup) box.setFromObject(obj);
-    else box.setFromCenterAndSize(obj.position, new THREE.Vector3(1, 1, 1));
-    return box;
   }
   function hits(a, b) {
     return a.min.x <= b.max.x && a.max.x >= b.min.x && a.min.y <= b.max.y && a.max.y >= b.min.y && a.min.z <= b.max.z && a.max.z >= b.min.z;
   }
+  function overlapInfo(obj) {
+    return { type: actorOf(obj).type, name: obj.name, source: obj.userData?.source || '', isScene: !!obj.userData?.isScene };
+  }
+  function meshBounds(mesh) {
+    const box = new THREE.Box3();
+    if (mesh?.isMesh) box.setFromObject(mesh);
+    return box;
+  }
+  function actorMeshes(obj) {
+    const out = [];
+    if (obj.isMesh) out.push(obj);
+    else obj.traverse?.((child) => { if (child.isMesh && !child.userData?.isOverlay && !child.userData?.isCollisionDebug) out.push(child); });
+    return out.filter((mesh) => isOverlapTarget({ ...overlapInfo(mesh), type: actorOf(obj).type, isScene: false }));
+  }
   async function overlaps() {
-    const nodes = eachNode((o) => o).filter((o) => !o.userData.playDead && o.visible !== false);
+    const nodes = eachNode((o) => o).filter((o) => !o.userData.playDead && o.visible !== false && isOverlapTarget(overlapInfo(o)));
     const now = new Set();
     for (let i = 0; i < nodes.length; i++) {
       for (let j = i + 1; j < nodes.length; j++) {
         const a = nodes[i], b = nodes[j];
         const ca = a.userData.collision, cb = b.userData.collision;
         if (ca?.preset === 'NoCollision' || cb?.preset === 'NoCollision') continue;
-        if (!ca && !cb) continue;
-        if (!hits(worldBox(a), worldBox(b))) continue;
+        const meshesA = actorMeshes(a), meshesB = actorMeshes(b);
+        if (!meshesA.length || !meshesB.length) continue;
+        let touching = false;
+        for (const ma of meshesA) {
+          const ba = meshBounds(ma);
+          if (ba.isEmpty()) continue;
+          for (const mb of meshesB) {
+            const bb = meshBounds(mb);
+            if (!bb.isEmpty() && hits(ba, bb)) touching = true;
+          }
+        }
+        if (!touching) continue;
         const key = idOf(a) < idOf(b) ? idOf(a) + '|' + idOf(b) : idOf(b) + '|' + idOf(a);
         now.add(key);
         if (!overlapWas.has(key)) {
@@ -348,13 +378,24 @@ export function installGameplay(ctx) {
     for (const key of now) overlapWas.add(key);
     if (interactLatch) {
       const who = nodes.find((o) => actorOf(o).type === 'character');
-      if (who) for (const other of nodes) if (other !== who && hits(worldBox(who), worldBox(other))) await callHook(other, 'onInteract', [brief(who)]);
+      if (who) {
+        for (const other of nodes) {
+          if (other === who) continue;
+          const mine = actorMeshes(who), theirs = actorMeshes(other);
+          let touching = false;
+          for (const ma of mine) for (const mb of theirs) {
+            const ba = meshBounds(ma), bb = meshBounds(mb);
+            if (!ba.isEmpty() && !bb.isEmpty() && hits(ba, bb)) touching = true;
+          }
+          if (touching) await callHook(other, 'onInteract', [brief(who)]);
+        }
+      }
       interactLatch = false;
     }
   }
   function brief(obj) {
-    const tags = actorOf(obj).tags.slice();
-    return { id: idOf(obj), name: obj.name, type: actorOf(obj).type, tags, hasTag: (t) => tags.includes(t), position: [obj.position.x, obj.position.y, obj.position.z] };
+    const actor = actorOf(obj);
+    return plainActorRef({ id: idOf(obj), name: obj.name, type: actor.type, tags: actor.tags, position: [obj.position.x, obj.position.y, obj.position.z] });
   }
 
   async function step(dt) {
@@ -453,7 +494,7 @@ export function installGameplay(ctx) {
   }
   function setCollisionOn(id, patch) {
     const obj = resolve(id);
-    if (!obj) return { ok: false, error: 'No actor' };
+    if (!obj) return { ok: false, error: id ? 'No actor matches ' + id : 'No actor' };
     const meshes = [];
     obj.traverse?.((o) => { if (o.isMesh) meshes.push(o); });
     if (!meshes.length && obj.isMesh) meshes.push(obj);
@@ -467,7 +508,7 @@ export function installGameplay(ctx) {
   }
   function setScript(id, source) {
     const obj = resolve(id);
-    if (!obj) return { ok: false, error: 'No actor' };
+    if (!obj) return { ok: false, error: id ? 'No actor matches ' + id : 'No actor' };
     const errors = validateScript(source ?? '');
     if (String(source || '').trim() && errors.length) return { ok: false, error: errors[0].message, errors };
     const actor = actorOf(obj);
@@ -477,9 +518,10 @@ export function installGameplay(ctx) {
       obj.userData.scriptSource = pack.source;
       actor.scriptId = pack.scriptId;
       actor.scriptOverride = !!pack.source;
-      const i = library.scripts.findIndex((s) => s.ownerId === idOf(obj));
+      const ownerId = idOf(obj);
+      const i = library.scripts.findIndex((s) => s.ownerId === ownerId);
       if (!pack.source) { if (i >= 0) library.scripts.splice(i, 1); return; }
-      const rec = { id: pack.scriptId || recId, name: (obj.name || 'Actor') + ' script', ownerId: idOf(obj), kind: actor.type, language: 'javascript', source: pack.source };
+      const rec = { id: pack.scriptId || recId, name: (obj.name || 'Actor') + ' script', ownerId, kind: actor.type, language: 'javascript', source: pack.source };
       if (i >= 0) library.scripts[i] = rec; else library.scripts.push(rec);
     };
     apply({ source: String(source ?? ''), scriptId: recId });
@@ -494,10 +536,17 @@ export function installGameplay(ctx) {
   }
   function detachScript(id) { return setScript(id, ''); }
   function addSpawn(spec = {}) {
-    const made = placePrimitive({ kind: 'spawn', name: spec.name || 'Spawn', position: spec.position || [0, 0, 0], actorType: 'static', tags: ['spawn'], collision: { enabled: false, preset: 'NoCollision', type: 'none', size: [0.3, 0.3, 0.3] } });
+    const tags = ['spawn'];
+    if (spec.team) tags.push('team:' + String(spec.team));
+    const made = placePrimitive({ kind: 'spawn', name: spec.name || 'Spawn', position: spec.position || [0, 0, 0], actorType: 'static', tags, collision: { enabled: false, preset: 'NoCollision', type: 'none', size: [0.3, 0.3, 0.3] } });
     const obj = resolve(made.id);
-    if (obj) actorOf(obj).spawn = true;
-    return { ok: true, id: made.id, name: made.name, spawn: true };
+    if (obj) {
+      const actor = actorOf(obj);
+      actor.spawn = true;
+      actor.team = spec.team ? String(spec.team) : null;
+      actor.tags = tags.slice();
+    }
+    return { ok: true, id: made.id, name: made.name, spawn: true, team: spec.team ? String(spec.team) : null, tags };
   }
   function createBlueprint(spec = {}) {
     const bp = blankBlueprint({ ...spec, id: spec.id || ('bp_' + (scriptSeq++)) });
@@ -529,7 +578,7 @@ export function installGameplay(ctx) {
       const mesh = obj.isMesh ? obj : obj.children?.find((c) => c.isMesh);
       return {
         id: idOf(obj), name: obj.name || 'Actor', label: obj.name || 'Actor', type: actor.type, typeLabel: ACTOR_LABELS[actor.type],
-        spawn: !!actor.spawn, tags: actor.tags.slice(), blueprintId: actor.blueprintId, scriptId: actor.scriptId,
+        spawn: !!actor.spawn, tags: actor.tags.slice(), team: actor.team || null, blueprintId: actor.blueprintId, scriptId: actor.scriptId,
         position: [obj.position.x, obj.position.y, obj.position.z],
         rotation: [obj.rotation.x * R2D, obj.rotation.y * R2D, obj.rotation.z * R2D],
         scale: [obj.scale.x, obj.scale.y, obj.scale.z],
@@ -743,6 +792,20 @@ export function installGameplay(ctx) {
   window.__mfOpenCollision = (obj) => openCollision(obj);
   window.__mfRefreshActors = refreshDetails;
 
+  function rebindScripts() {
+    const root = ctx.getModel();
+    if (root?.userData?.isScene && !root.userData.sceneId) root.userData.sceneId = 'level';
+    for (const rec of library.scripts) {
+      if (!rec?.ownerId) continue;
+      let node = ctx.findSceneNode(rec.ownerId);
+      if (!node && root && (root.userData?.sceneId === rec.ownerId || rec.ownerId === 'level')) node = root;
+      if (!node) continue;
+      node.userData.scriptSource = rec.source;
+      const actor = actorOf(node);
+      actor.scriptId = rec.id;
+      actor.scriptOverride = true;
+    }
+  }
   function exportLibrary() {
     return { version: 1, scripts: library.scripts, blueprints: library.blueprints, limits: SANDBOX_LIMITS_TEXT };
   }
@@ -768,7 +831,7 @@ export function installGameplay(ctx) {
     addSpawn, createBlueprint, spawnActor, listActors, listScriptables,
     validateScript: (source) => { const errors = validateScript(source); return { ok: errors.length === 0, errors }; },
     scriptTemplate: templateSource, runPlay, stopPlay, saveProject,
-    exportScriptLibrary: exportLibrary, loadScriptLibrary: loadLibrary, applyActorRecord,
+    exportScriptLibrary: exportLibrary, loadScriptLibrary: loadLibrary, applyActorRecord, rebindScripts,
     agentVoice: { hear(who, text) { heard.push({ who: who || 'agent', text: String(text || '') }); editorUi.log('Heard ' + (who || 'agent') + ': ' + text); } },
     limits: SANDBOX_LIMITS_TEXT,
   };

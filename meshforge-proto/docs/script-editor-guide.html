@@ -1,14 +1,13 @@
-<!doctype html>
-<html><head><meta charset="utf-8"><title>MeshForge script editor</title>
+<!doctype html><html><head><meta charset="utf-8"><title>MeshForge script editor</title>
 <style>
 @page { size: A4; margin: 14mm 12mm; }
 body { font: 11pt/1.45 Georgia, "Times New Roman", serif; color: #1c1c1c; }
 h1 { font: 18pt sans-serif; margin: 0 0 8px; }
-h2 { font: 14pt sans-serif; margin: 16px 0 6px; page-break-after: avoid; }
-h3 { font: 12pt sans-serif; margin: 10px 0 4px; page-break-after: avoid; }
+h2 { font: 14pt sans-serif; margin: 16px 0 6px; }
+h3 { font: 12pt sans-serif; margin: 10px 0 4px; }
 code, pre { font-family: ui-monospace, monospace; font-size: 9.5pt; }
 pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }
-table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; page-break-inside: avoid; }
+table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
 th, td { border: 1px solid #bbb; padding: 3px 6px; vertical-align: top; text-align: left; }
 th { background: #f3f0ea; }
 img { width: 100%; height: auto; }
@@ -16,10 +15,8 @@ figure { margin: 8px 0 12px; }
 figcaption { font: 9pt sans-serif; color: #444; }
 .appendix { page-break-before: always; columns: 2; column-gap: 10px; font-size: 8pt; line-height: 1.22; }
 .appendix h1 { column-span: all; font-size: 14pt; }
-.appendix h3 { break-after: avoid; font-size: 9.5pt; margin: 6px 0 2px; }
+.appendix h3 { font-size: 9.5pt; margin: 6px 0 2px; }
 .appendix p, .appendix table { font-size: 8pt; }
-.appendix table { page-break-inside: auto; }
-.appendix tr { break-inside: avoid; }
 </style></head><body><article>
 <h1>MeshForge script editor</h1>
 <p>This guide is for someone making a level. It explains the script window, how actors and blueprints work, how a script shows up in the viewport, and how an AI can help. It does not assume you write code for a living.</p>
@@ -109,6 +106,10 @@ node scripts/build_level.mjs http://127.0.0.1:8000/?noautosave=1 C:\MeshForge\de
 <p>On Windows, start <code>run_windows.bat</code> first so that address is open. Copy the file and add more BlockAll cubes where you want cover. That is the shape of a shooter level: a landscape, walls, spawn points, a Character, and NPC actors with scripts. MeshForge does not yet contain a gun, a health number, or a finished AI body. The Character actor is the body Play already moves. An outside AI drives the editor through this API. It does not walk around inside the level as its own puppet yet.</p>
 <p><code>setLandscapeSize</code> takes width, depth, and height in metres. The map is square, so depth uses the same edge as width. The call says so in its note. Height scales the hills.</p>
 <p><code>saveProject</code> needs a path ending in <code>.mfproj</code> and the MeshForge server, because the file is written on that computer. The zip holds <code>scene.json</code>, <code>scene.glb</code>, <code>materials.json</code>, and <code>scripts.json</code>.</p>
+<p>File ▸ Open reads that zip back as separate actors. It does not squash the level into one small mesh. <code>MeshForge.openProject(bytes or url)</code> does the same thing. Scripts are stored against the actor&#x27;s saved id, including the level, whose id stays <code>level</code>.</p>
+<p><code>sendLandscapeToScene</code> keeps the landscape&#x27;s real size. Pass <code>scale</code> or <code>size</code> when you want a different one. It no longer shrinks a large map to sit beside a small prop. The camera far plane starts at 2000 m and grows with the scene. <code>setCameraClip({ near, far })</code> sets it directly. <code>getGroundHeight(x, z)</code> reads the terrain. In Play, a Character stands on that height instead of falling to zero.</p>
+<p>A spawn can carry a team: <code>addSpawn({ name, position, team: &#x27;red&#x27; })</code>. The team is saved and shows up in <code>listActors</code>. <code>setScript</code> and <code>setCollision</code> return an error when the id does not match an actor. They do not write onto the whole level by mistake.</p>
+<p>Overlap events skip the Level actor and any mesh named Terrain or Water, so a ground plane does not count as touching every prop. Assigned materials stay visible in solid view, not only in the toon view. Matcap and wire use the material colour too.</p>
 <h2>6. Safety and limits</h2>
 <p>A script is gameplay code, not a plugin. Plugins are trusted and are not sandboxed. Scripts are.</p>
 <ul>
@@ -129,20 +130,19 @@ node scripts/build_level.mjs http://127.0.0.1:8000/?noautosave=1 C:\MeshForge\de
 <li>Walking a Character across the landscape, the collision preview, and spoken <code>onHear</code> were not sat through by a person.</li>
 <li>A programmable material state on a companion was not watched in the view during Play.</li>
 </ul>
-</article><article class="appendix">
-<h1>Appendix. Keyboard and mouse shortcuts</h1>
+</article><article class="appendix"><h1>Appendix. Keyboard and mouse shortcuts</h1>
 <p>These are the shortcuts the program actually handles. They were taken from the key and mouse handlers. While a text box, a dropdown, or the script code area is focused, the main editor ignores letter keys so you can type. The script window keeps Ctrl+Enter and Ctrl+S.</p>
 <p>The camera code contains arrow-key panning, but MeshForge never turns that listener on. During Play the arrows move the Character instead. They do not pan the view.</p>
-<p>The on-screen help mentions Ctrl plus a numpad view key for the opposite side. The handler returns before that branch, so Ctrl+Numpad does not snap the opposite view. Click the far ball on the corner axis widget instead.</p>
+<p>Ctrl or Cmd with Numpad 1, 3, or 7 (or the matching top-row key) snaps the opposite view: back, left, or bottom. The corner axis widget does the same when you click the far ball.</p>
 <h3>Global</h3>
 <table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
 <tr><td>Ctrl+Z or Cmd+Z</td><td>Undo</td></tr>
 <tr><td>Ctrl+Shift+Z or Cmd+Shift+Z</td><td>Redo</td></tr>
 <tr><td>Ctrl+Y or Cmd+Y</td><td>Redo</td></tr>
 <tr><td>Click a ball on the corner axis widget</td><td>Snap the view to that side, including back, left, and bottom</td></tr>
-<tr><td>Numpad 1, or the 1 key outside Edit Mode</td><td>Front view</td></tr>
-<tr><td>Numpad 3, or the 3 key outside Edit Mode</td><td>Right view</td></tr>
-<tr><td>Numpad 7, or the 7 key outside Edit Mode</td><td>Top view</td></tr>
+<tr><td>Numpad 1, or the 1 key outside Edit Mode</td><td>Front view. Ctrl or Cmd shows the back</td></tr>
+<tr><td>Numpad 3, or the 3 key outside Edit Mode</td><td>Right view. Ctrl or Cmd shows the left</td></tr>
+<tr><td>Numpad 7, or the 7 key outside Edit Mode</td><td>Top view. Ctrl or Cmd shows the bottom</td></tr>
 <tr><td>Numpad 5, or the 5 key outside Sculpt Mode</td><td>Perspective / orthographic</td></tr>
 <tr><td>Numpad decimal, period, or Home</td><td>Frame the selection</td></tr>
 <tr><td>Z, when you are not mid-transform</td><td>Wireframe / solid</td></tr>

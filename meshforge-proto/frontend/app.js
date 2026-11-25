@@ -20,6 +20,7 @@ import { geometryFromHead } from './progdraw.js';
 import { applyMaterialEvent, createProgramActions } from './progmat.js';
 import { initPlugins } from './plugins.js';
 import { installGameplay } from './gameplay.js';
+import { cameraFarForSpan, landscapeSendScale, DEFAULT_CAMERA_FAR } from './playrules.js';
 
 const $ = (id) => document.getElementById(id);
 const state = { file: null, runner: 'local', shading: 'solid', wireOverlay: false, current: null, config: null };
@@ -29,8 +30,8 @@ const canvas = $('c'), vp = canvas.parentElement;
 const renderer = new THREE.WebGLRenderer({ canvas, antialias: true, preserveDrawingBuffer: true });
 renderer.setPixelRatio(devicePixelRatio); renderer.setClearColor(0x3a3a3a);
 const scene = new THREE.Scene();
-const persp = new THREE.PerspectiveCamera(40, 1, 0.01, 100);
-const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, -100, 100);
+const persp = new THREE.PerspectiveCamera(40, 1, 0.1, DEFAULT_CAMERA_FAR);
+const ortho = new THREE.OrthographicCamera(-1, 1, 1, -1, -DEFAULT_CAMERA_FAR, DEFAULT_CAMERA_FAR);
 let camera = persp; persp.position.set(2.2, 1.4, 2.6);
 const controls = new OrbitControls(camera, canvas);
 controls.enableDamping = true;
@@ -154,11 +155,16 @@ addEventListener('keydown', (e) => {
     if (e.shiftKey && (e.key === 'D' || e.key === 'd')) { if (editor.sel) { e.preventDefault(); duplicateObject(); return; } }
   }
   if (editor.handleKey(e)) return;
-  if (e.ctrlKey || e.metaKey) return;
-  const opp = e.ctrlKey ? -1 : 1;
   const map = { Numpad1: ['Z', 0, 0, 1], Numpad3: ['X', 1, 0, 0], Numpad7: ['Y', 0, 1, 0] };
-  const k = map[e.code] || map[{ Digit1: 'Numpad1', Digit3: 'Numpad3', Digit7: 'Numpad7' }[e.code]];
-  if (k) { e.preventDefault(); snapView(new THREE.Vector3(k[1], k[2], k[3]).multiplyScalar(opp), (opp < 0 ? '-' : '') + k[0]); }
+  const viewCode = { Digit1: 'Numpad1', Digit3: 'Numpad3', Digit7: 'Numpad7' }[e.code] || e.code;
+  const k = map[viewCode];
+  if (k && (e.ctrlKey || e.metaKey) && !e.altKey && !e.shiftKey) {
+    e.preventDefault();
+    snapView(new THREE.Vector3(k[1], k[2], k[3]).multiplyScalar(-1), '-' + k[0]);
+    return;
+  }
+  if (e.ctrlKey || e.metaKey) return;
+  if (k) { e.preventDefault(); snapView(new THREE.Vector3(k[1], k[2], k[3]), k[0]); }
   else if (e.code === 'Numpad5' || e.code === 'Digit5') toggleOrtho();
   else if (e.code === 'NumpadDecimal' || e.key === '.' || e.key === 'Home') frameModel();
   else if (e.key === 'z' || e.key === 'Z') setShading(state.shading === 'wire' ? 'solid' : 'wire');
@@ -172,7 +178,21 @@ function applyShading() {
     o.userData.orig ??= o.material;
     if (state.shading === 'chibili' && mats) mats.apply(o, true);
     else if (mats?.hasProgram?.(o)) mats.apply(o, false);
-    else { mats?.apply(o, false); o.material = state.shading === 'color' ? o.userData.orig : MAT[state.shading]; }
+    else {
+      mats?.apply(o, false);
+      const orig = o.userData.orig;
+      const src = Array.isArray(orig) ? orig[0] : orig;
+      const tint = src?.color?.isColor ? src.color : new THREE.Color(0xcfcfcf);
+      if (state.shading === 'wire') {
+        o.userData.viewWire ??= new THREE.MeshBasicMaterial({ wireframe: true, side: THREE.DoubleSide });
+        o.userData.viewWire.color.copy(tint);
+        o.material = o.userData.viewWire;
+      } else if (state.shading === 'matcap') {
+        o.userData.viewMatcap ??= new THREE.MeshMatcapMaterial({ matcap: MAT.matcap.matcap, side: THREE.DoubleSide });
+        o.userData.viewMatcap.color.copy(tint);
+        o.material = o.userData.viewMatcap;
+      } else o.material = orig;
+    }
     let ov = o.children.find((c) => c.userData.isWireOverlay);
     if (!ov) { ov = new THREE.Mesh(o.geometry, MAT.overlay); ov.userData.isOverlay = ov.userData.isWireOverlay = true; ov.raycast = () => {}; o.add(ov); }
     ov.visible = state.wireOverlay && state.shading !== 'wire';
@@ -424,18 +444,25 @@ window.MeshForge = {
 
 
 // ---------- v6 scenes: many separate objects (see docs/scene-import.md) ----------
+function markLevel(root) {
+  if (!root) return root;
+  root.userData.isScene = true;
+  root.userData.norm ??= new THREE.Matrix4();
+  if (!root.userData.sceneId) root.userData.sceneId = 'level';
+  return root;
+}
 function ensureScene(append) {
-  if (append && model?.userData.isScene) return model;
+  if (append && model?.userData.isScene) return markLevel(model);
   if (append && model && !model.userData.isScene) {
     const root = new THREE.Group(); root.name = 'Scene'; root.userData.isScene = true; root.userData.norm = new THREE.Matrix4();
     model.updateMatrixWorld(true);
     model.children.filter((c) => !c.userData.isOverlay).forEach((c) => { c.applyMatrix4(model.matrixWorld); root.add(c); });
     scene.remove(model); model = root; scene.add(root); model.visible = !land?.active;
-    return root;
+    return markLevel(root);
   }
   if (append && !model) {
     const root = new THREE.Group(); root.name = 'Scene'; root.userData.isScene = true; root.userData.norm = new THREE.Matrix4();
-    model = root; scene.add(root); model.visible = !land?.active; return root;
+    model = root; scene.add(root); model.visible = !land?.active; return markLevel(root);
   }
   const root = new THREE.Group(); root.name = 'Scene'; root.userData.isScene = true; root.userData.norm = new THREE.Matrix4();
   const prev = model;
@@ -444,7 +471,7 @@ function ensureScene(append) {
   model = root; scene.add(root); model.visible = !land?.active; state.current = null; explodeK = 0; if ($('explode')) $('explode').value = 0;
   editor.clearHistory();
   if (prev) editor.pushHistory({ label: 'Open scene', undo: () => { scene.remove(root); scene.add(prev); model = prev; updateInfo(); }, redo: () => { scene.remove(prev); scene.add(root); model = root; updateInfo(); } });
-  return root;
+  return markLevel(root);
 }
 function fitNewcomer(node, root) {
   node.position.set(0, 0, 0); node.scale.set(1, 1, 1); node.rotation.set(0, 0, 0); node.updateMatrixWorld(true);
@@ -674,14 +701,15 @@ async function sendLandscapeToScene(opts = {}) {
   const m = land.hierarchy ? land.hierarchy() : bakeObject(terrain, 'Landscape');
   if (!m) return null;
   const sz = new THREE.Box3().setFromObject(m).getSize(new THREE.Vector3());
-  const others = sceneObjects(); let width = 4; if (others.length) { const b = new THREE.Box3(); others.forEach((o) => b.expandByObject(o)); width = Math.max(b.getSize(new THREE.Vector3()).x, 1) * 1.5; }
-  m.scale.setScalar(opts.scale ?? width / Math.max(sz.x, sz.z, 1e-6));
+  const scale = landscapeSendScale(Math.max(sz.x, sz.z), opts);
+  m.scale.setScalar(scale);
+  if (Array.isArray(opts.position) && opts.position.length >= 3) m.position.set(+opts.position[0] || 0, +opts.position[1] || 0, +opts.position[2] || 0);
   addUndoable(root, m, { id: 'landscape', label: 'Landscape', source: 'landscape' }, 'Send landscape');
   if (!scene.children.includes(root)) scene.add(root);
-  applyShading(); setShading('color'); frameModel(); updateInfo(); $('drop').classList.add('hidden');
+  applyShading(); setShading('color'); fitCameraClip(); frameModel(); updateInfo(); $('drop').classList.add('hidden');
   document.querySelectorAll('[data-export]').forEach((b) => b.disabled = false);
-  $('progMsg').textContent = 'Landscape added as a group (terrain, water, buildings by type, trees). Ctrl+Z removes only that group.';
-  return { id: m.userData.sceneId, label: m.name };
+  $('progMsg').textContent = 'Landscape added at world size. Ctrl+Z removes only that group.';
+  return { ok: true, id: m.userData.sceneId, label: m.name, scale, size: Math.max(sz.x, sz.z) * scale };
 }
 Object.assign(window.MeshForge, {
   loadScene: (src, opts) => sceneIO.loadScene(src, opts),
@@ -717,6 +745,44 @@ function setCamera({ position, target, fov } = {}) {
   if (Number.isFinite(+fov) && fov > 1 && fov < 170) { persp.fov = +fov; persp.updateProjectionMatrix(); }
   camera.lookAt(controls.target); controls.update(); return { position: camera.position.toArray(), target: controls.target.toArray(), fov: persp.fov };
 }
+function setCameraClip({ near, far } = {}) {
+  if (Number.isFinite(+near) && +near > 0) persp.near = +near;
+  if (Number.isFinite(+far) && +far > persp.near) {
+    persp.far = +far;
+    ortho.near = -Math.abs(+far);
+    ortho.far = Math.abs(+far);
+  }
+  persp.updateProjectionMatrix();
+  ortho.updateProjectionMatrix();
+  return { near: persp.near, far: persp.far };
+}
+function fitCameraClip() {
+  let span = 20;
+  if (model) {
+    const box = new THREE.Box3().setFromObject(model);
+    if (!box.isEmpty()) {
+      const size = box.getSize(new THREE.Vector3());
+      span = Math.max(size.x, size.y, size.z, span);
+    }
+  }
+  return setCameraClip({ far: cameraFarForSpan(span) });
+}
+function getGroundHeight(x, z) {
+  const px = +x || 0, pz = +z || 0;
+  const meshes = [];
+  model?.traverse((o) => {
+    if (!o.isMesh || o.userData?.isOverlay) return;
+    const name = String(o.name || '').toLowerCase();
+    if (name === 'terrain' || o.userData?.source === 'landscape' && name === 'terrain') meshes.push(o);
+  });
+  if (meshes.length) {
+    const ray = new THREE.Raycaster(new THREE.Vector3(px, 10000, pz), new THREE.Vector3(0, -1, 0));
+    const hit = ray.intersectObjects(meshes, false)[0];
+    if (hit) return hit.point.y;
+  }
+  if (typeof land?.sampleHeight === 'function') return land.sampleHeight(px, pz);
+  return 0;
+}
 // Add ▸ Sky dome / Water plane (useful for a game viewport)
 function addPrimitive(kind) {
   if (land?.active) setWorkspace('gen');
@@ -751,7 +817,12 @@ document.querySelectorAll('.menu [data-act]').forEach((b) => b.onclick = () => {
 // scene.json: persist the material library and per-object slots; honour room.camera
 const _exportScene = window.MeshForge.exportScene;
 function withMaterials(m) { m.generator = 'MeshForge 8.0'; m.materials = mats.libJSON(); m.chibili = { ...CHIBILI };
-  m.objects.forEach((o) => { const x = sceneObjects().find((y) => y.userData.sceneId === o.id); if (x?.userData.mf) { o.materials = x.userData.mf.slots.slice(); if (x.userData.mf.tex) o.texture = { ...x.userData.mf.tex }; } window.__mfStampObject?.(o, x); }); return m; }
+  m.objects.forEach((o) => { const x = sceneObjects().find((y) => y.userData.sceneId === o.id); if (x?.userData.mf) { o.materials = x.userData.mf.slots.slice(); if (x.userData.mf.tex) o.texture = { ...x.userData.mf.tex }; } window.__mfStampObject?.(o, x); });
+  if (model?.userData?.isScene) {
+    markLevel(model);
+    m.level = { id: model.userData.sceneId, name: model.name || 'Scene', type: 'level', actor: model.userData.actor || { type: 'level' }, script: model.userData.scriptSource || '' };
+  }
+  return m; }
 window.MeshForge.exportScene = () => withMaterials(_exportScene());
 const _bundle = exportBundle;
 window.MeshForge.exportSceneBundle = async () => { const b = await _bundle(); withMaterials(b.manifest); return b; };
@@ -765,7 +836,7 @@ window.__mfAfterSceneLoad = (man) => {
   applyShading();
 };
 Object.assign(window.MeshForge, {
-  version: '8.0', setCamera, getCamera: () => ({ position: camera.position.toArray(), target: controls.target.toArray(), fov: persp.fov }),
+  version: '8.0', setCamera, setCameraClip, getCamera: () => ({ position: camera.position.toArray(), target: controls.target.toArray(), fov: persp.fov, near: persp.near, far: persp.far }), getGroundHeight,
   setShading: (v) => setShading(v), setWorkspace, chibili: CHIBILI,
   materials: {
     list: () => mats.libJSON(), get: (id) => mats.byId(id), create: (d) => mats.create(d).id, duplicate: (id) => mats.duplicate(id)?.id, rename: (id, n) => mats.rename(id, n), remove: (id) => mats.remove(id), update: (id, p) => mats.update(id, p), setActive: (id) => mats.setActive(id),
@@ -866,15 +937,35 @@ async function buildProjectBlob() {
 }
 async function openProjectBytes(buf) {
   const files = readStoredZip(buf);
-  if (!files['scene.glb']) throw new Error('Project has no scene.glb');
-  const url = URL.createObjectURL(new Blob([files['scene.glb']], { type: 'model/gltf-binary' }));
-  await new Promise((res, rej) => loadGLB(url, res, rej, { label: 'Open project', source: 'project', name: 'Project' }));
-  URL.revokeObjectURL(url);
+  if (!files['scene.glb'] && !files['scene.json']) throw new Error('Project has no scene');
+  let manifest = null;
+  if (files['scene.json']) {
+    try { manifest = JSON.parse(new TextDecoder().decode(files['scene.json'])); } catch { manifest = null; }
+  }
   if (files['scripts.json']) {
     try { window.__mfLoadScripts?.(JSON.parse(new TextDecoder().decode(files['scripts.json']))); } catch { /* scripts are optional */ }
   }
-  if (files['scene.json']) {
-    try { window.__mfAfterSceneLoad?.(JSON.parse(new TextDecoder().decode(files['scene.json']))); } catch { /* manifest is optional for the mesh */ }
+  if (files['scene.glb']) {
+    const blob = new Blob([files['scene.glb']], { type: 'model/gltf-binary' });
+    await sceneIO.loadScene(blob);
+  }
+  if (manifest) window.__mfAfterSceneLoad?.(manifest);
+  fitCameraClip();
+  return { ok: true, objects: sceneObjects().length };
+}
+async function openProject(src) {
+  try {
+    if (src instanceof ArrayBuffer) return await openProjectBytes(src);
+    if (ArrayBuffer.isView(src)) return await openProjectBytes(src.buffer);
+    if (src instanceof Blob) return await openProjectBytes(await src.arrayBuffer());
+    if (typeof src === 'string') {
+      const res = await fetch(src);
+      if (!res.ok) return { ok: false, error: 'Could not open ' + src };
+      return await openProjectBytes(await res.arrayBuffer());
+    }
+    return { ok: false, error: 'openProject expects bytes or a url' };
+  } catch (err) {
+    return { ok: false, error: err.message || 'Could not open the project' };
   }
 }
 recover = createRecover({
@@ -1095,11 +1186,12 @@ const playHost = installGameplay({
   applyShading,
   buildProject: buildProjectBlob,
   generateLandscape: (opts) => agentActions.generateLandscape(opts?.seed),
-  sendLandscape: () => sendLandscapeToScene(),
+  sendLandscape: (opts) => sendLandscapeToScene(opts || {}),
+  groundHeight: (x, z) => getGroundHeight(x, z),
   programActions,
 });
 Object.assign(agentActions, playHost.api);
-Object.assign(window.MeshForge, playHost.api);
+Object.assign(window.MeshForge, playHost.api, { openProject, setCameraClip, getGroundHeight });
 window.__mfLoadScripts = playHost.api.loadScriptLibrary;
 window.__mfStampObject = (entry, node) => {
   if (!entry || !node) return;
@@ -1112,10 +1204,25 @@ window.__mfStampObject = (entry, node) => {
   const prevAfter = window.__mfAfterSceneLoad;
   window.__mfAfterSceneLoad = (man) => {
     prevAfter?.(man);
+    const applyXform = (node, rec) => {
+      if (!node || !rec) return;
+      if (Array.isArray(rec.position) && rec.position.length >= 3) node.position.set(+rec.position[0] || 0, +rec.position[1] || 0, +rec.position[2] || 0);
+      if (Array.isArray(rec.rotation) && rec.rotation.length >= 3) node.rotation.set(+rec.rotation[0] || 0, +rec.rotation[1] || 0, +rec.rotation[2] || 0);
+      if (Array.isArray(rec.scale) && rec.scale.length >= 3) node.scale.set(+rec.scale[0] || 1, +rec.scale[1] || 1, +rec.scale[2] || 1);
+      else if (Number.isFinite(+rec.scale) && !Array.isArray(rec.scale)) node.scale.setScalar(+rec.scale);
+    };
     for (const rec of man?.objects || []) {
       const node = findSceneNode(rec.id) || findSceneNode(rec.label) || findSceneNode(rec.name) || findSceneNode(rec.node);
+      applyXform(node, rec);
       playHost.api.applyActorRecord(node, rec);
     }
+    if (man?.level && model) {
+      markLevel(model);
+      if (man.level.id) model.userData.sceneId = String(man.level.id);
+      playHost.api.applyActorRecord(model, man.level);
+    }
+    playHost.api.rebindScripts?.();
+    fitCameraClip();
   };
   const prevTick = window.__mfTick;
   let lastPlay = performance.now();

@@ -485,9 +485,18 @@ self.onmessage = function (ev) {
       try { box.hooks = box.factory(box.api) || {}; }
       catch (err2) { postMessage({ op: 'result', id: msg.id, token: msg.token, commands: [], logs: [String(err2.message || err2)] }); return; }
     }
+    function attachHasTag(value) {
+      if (!value || typeof value !== 'object') return value;
+      if (Array.isArray(value)) return value.map(attachHasTag);
+      if (Array.isArray(value.tags)) {
+        var tags = value.tags;
+        value.hasTag = function (tag) { return tags.indexOf(tag) >= 0; };
+      }
+      return value;
+    }
     var fn = box.hooks[msg.hook];
     if (typeof fn === 'function') {
-      try { fn.apply(undefined, msg.args || []); }
+      try { fn.apply(undefined, (msg.args || []).map(attachHasTag)); }
       catch (err3) { box.logs.push(String(err3.message || err3)); }
     }
     if (msg.dt) {
