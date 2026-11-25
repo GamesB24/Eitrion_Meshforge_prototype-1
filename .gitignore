@@ -2,3 +2,6 @@
 .env.*
 *.mfproj
 autosave/
+
+__pycache__/
+*.pyc
