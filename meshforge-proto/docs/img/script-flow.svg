@@ -1,0 +1,12 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="120" viewBox="0 0 720 120">
+  <style>text{font-family:sans-serif;font-size:13px;fill:#1c1c1c} .b{fill:#fff;stroke:#333;stroke-width:1.4} .a{stroke:#333;fill:none;stroke-width:1.4}</style>
+  <rect class="b" x="8" y="36" width="120" height="48" rx="6"/><text x="68" y="64" text-anchor="middle">Blueprint</text>
+  <path class="a" d="M128 60 H158"/><polygon points="158,60 150,55 150,65"/>
+  <rect class="b" x="160" y="36" width="110" height="48" rx="6"/><text x="215" y="64" text-anchor="middle">Actor</text>
+  <path class="a" d="M270 60 H300"/><polygon points="300,60 292,55 292,65"/>
+  <rect class="b" x="302" y="36" width="120" height="48" rx="6"/><text x="362" y="64" text-anchor="middle">Script</text>
+  <path class="a" d="M422 60 H452"/><polygon points="452,60 444,55 444,65"/>
+  <rect class="b" x="454" y="36" width="110" height="48" rx="6"/><text x="509" y="64" text-anchor="middle">Play</text>
+  <path class="a" d="M564 60 H594"/><polygon points="594,60 586,55 586,65"/>
+  <rect class="b" x="596" y="36" width="112" height="48" rx="6"/><text x="652" y="64" text-anchor="middle">Viewport</text>
+</svg>

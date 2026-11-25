@@ -8,7 +8,7 @@ import { createColorWheel } from './colorwheel.js';
 import { PRESET_IDS, blankSpec, clonePreset, currentParamList, exportSpec, runtime, sampleRuntime, saveState, setParam, setState, shaderKey } from './progmat.js';
 import { makeProgramMaterial, rememberSlots, syncProgramMaterial, uvForSlot } from './progdraw.js';
 import { mountProgramUi } from './progview.js';
-import { onAssetActivate, setBrowserExtras } from './content.js';
+import { setBrowserExtras } from './content.js';
 
 export const DEFAULT_MATERIALS = [
   { id: 'cherry', name: 'Cherry Red', color: '#e8383d', shade: '#6a2a5a' },
@@ -399,7 +399,7 @@ export function createMaterials(ctx) {
         menu.querySelectorAll('button').forEach((b) => b.onclick = () => { menu.hidden = true; libAction(b.dataset.a, id); }); };
       el.ondragstart = (e) => { e.dataTransfer.setData('text/x-mf-material', id); e.dataTransfer.setData('text/plain', 'mf-material:' + id); e.dataTransfer.effectAllowed = 'copy'; setActive(id); };
     });
-    setBrowserExtras(lib.filter((m) => m.kind === 'program').map((m) => ({ id: 'prog_' + m.id, name: m.name, category: 'program', materialId: m.id, title: 'Programmable material' })));
+    setBrowserExtras(lib.filter((m) => m.kind === 'program').map((m) => ({ id: 'prog_' + m.id, name: m.name, category: 'program', materialId: m.id, title: 'Programmable material. Double-click edits the shader.' })), 'materials');
   }
   function programThumb(m) {
     const c = document.createElement('canvas'); c.width = c.height = 64; const g = c.getContext('2d');
@@ -491,7 +491,7 @@ export function createMaterials(ctx) {
     },
     setSlotUv: (mesh, slot, opts) => setSlotUv(mesh, slot, opts),
   });
-  onAssetActivate((asset) => { if (asset?.materialId) programUi.open(asset.materialId); });
+  window.__mfOpenProgram = (id) => programUi.open(id);
   // drop a library swatch onto the viewport
   vp.addEventListener('drop', (e) => {
     const dt = e.dataTransfer; let id = dt?.getData('text/x-mf-material');

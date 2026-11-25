@@ -1,0 +1,260 @@
+<!doctype html><html><head><meta charset="utf-8"><title>MeshForge script editor</title>
+<style>
+@page { size: A4; margin: 14mm 12mm; }
+body { font: 11pt/1.45 Georgia, "Times New Roman", serif; color: #1c1c1c; }
+h1 { font: 18pt sans-serif; margin: 0 0 8px; }
+h2 { font: 14pt sans-serif; margin: 16px 0 6px; }
+h3 { font: 12pt sans-serif; margin: 10px 0 4px; }
+code, pre { font-family: ui-monospace, monospace; font-size: 9.5pt; }
+pre { background: #f4f4f4; padding: 8px; white-space: pre-wrap; }
+table { border-collapse: collapse; width: 100%; margin: 6px 0 10px; }
+th, td { border: 1px solid #bbb; padding: 3px 6px; vertical-align: top; text-align: left; }
+th { background: #f3f0ea; }
+img { width: 100%; height: auto; }
+figure { margin: 8px 0 12px; }
+figcaption { font: 9pt sans-serif; color: #444; }
+.appendix { page-break-before: always; columns: 2; column-gap: 10px; font-size: 8pt; line-height: 1.22; }
+.appendix h1 { column-span: all; font-size: 14pt; }
+.appendix h3 { font-size: 9.5pt; margin: 6px 0 2px; }
+.appendix p, .appendix table { font-size: 8pt; }
+</style></head><body><article>
+<h1>MeshForge script editor</h1>
+<p>This guide is for someone making a level. It explains the script window, how actors and blueprints work, how a script shows up in the viewport, and how an AI can help. It does not assume you write code for a living.</p>
+<figure><img src="img/script-flow.svg" alt="A blueprint becomes an actor, then a script, then motion in Play"><figcaption>A blueprint becomes an actor, then a script, then motion in Play</figcaption></figure>
+<h2>1. What the script editor is</h2>
+<p>The script editor is a window for the small programs that make a level do something when you press Play. A door can open. A pickup can vanish. A companion can walk toward the player and answer a line of speech.</p>
+<p>Open it in any of these ways:</p>
+<ul>
+<li>Click the <strong>Script</strong> tab.</li>
+<li>Double-click an actor in the view or in the outliner.</li>
+<li>In the Details panel, under <strong>Actor</strong>, click <strong>Edit Script</strong>.</li>
+<li>Right-click an actor or a blueprint and choose <strong>Edit Script</strong>.</li>
+</ul>
+<p>The window can float. Drag the title bar to move it, and drag the corner to resize it. <strong>Dock</strong> pins it along the bottom. <strong>Float</strong> puts it back. Each open script is a tab.</p>
+<p>The code area highlights keywords, strings, numbers, and comments. <strong>Validate</strong> checks the script and prints errors with line numbers in the console under the code. <strong>Save</strong> writes it into the project. MeshForge also writes the project on a short timer after you edit, using the same autosave as the rest of the level.</p>
+<p>Ctrl+Z inside the code box undoes typing. Saving a script, or accepting an AI edit, is also one step on the level undo stack.</p>
+<h2>2. What can have a script</h2>
+<p>Five kinds of thing can carry a script.</p>
+<table><thead><tr><th>Kind</th><th>What it is</th><th>What the script usually does</th></tr></thead><tbody>
+<tr><td>Programmable material</td><td>A material with a GLSL snippet and named parameters</td><td>Changes colour, glow, and the states on that material. This tab is the shader, not gameplay code.</td></tr>
+<tr><td>Static mesh / Static actor</td><td>A prop, a wall, a door, a pickup</td><td>Reacts when something touches it or when an event arrives</td></tr>
+<tr><td>Character blueprint, and a placed Character</td><td>The body the player drives in Play</td><td>Reads input, or leaves walking to the built-in Character movement</td></tr>
+<tr><td>NPC/AI blueprint, and a placed NPC</td><td>A character that is not the player</td><td>Patrols, follows, listens, and talks</td></tr>
+<tr><td>Level</td><td>The scene itself</td><td>Hears events from the whole level</td></tr>
+</tbody></table>
+<p>A <strong>blueprint</strong> is an asset in the content browser, under Blueprints. It remembers an actor type, a shape, a collision setup, and a script. Drag it into the view, or ask an agent to spawn it. That makes an <strong>actor</strong>: one placed copy. The copy starts with the blueprint&#x27;s script. If you edit the copy&#x27;s script, that copy keeps its own version. The blueprint&#x27;s other copies stay as they were. The Details panel shows the blueprint name and whether this actor has its own script.</p>
+<p>Every object in the scene is an actor. The type is Static, Character, NPC/AI, or Level. Change it from the Type menu in Details. The scene root is the Level actor. Its script is the level script.</p>
+<p>Collision comes with the actor. Presets are BlockAll, OverlapAll, NoCollision, Pawn, and Water. Shapes are box, sphere, capsule, convex, and complex. Double-click a mesh in the content browser to open the collision editor. Right-click an actor and choose <strong>Edit Collision</strong>, or use the button in Details. Turn on <strong>Collision</strong> in the view header to see the shapes. A Character or NPC defaults to a Pawn capsule. A spawn point defaults to no collision.</p>
+<p><strong>Play</strong> runs the open scene. <strong>Stop</strong> puts transforms back and deletes anything a script spawned during Play. Escape also stops. Only a Character actor walks with the keys. WASD or the arrow keys move it. Space jumps. E calls <code>onInteract</code> on actors it is touching.</p>
+<h2>3. How a script meets the rest of the editor</h2>
+<figure><img src="img/script-links.svg" alt="The script editor sits between the view, the lists, materials, collision, Play, and the console"><figcaption>The script editor sits between the view, the lists, materials, collision, Play, and the console</figcaption></figure>
+<ul>
+<li><strong>Viewport.</strong> Play shows the result. A script moves an actor by asking for a new position or rotation. The view draws that. It does not run the script itself.</li>
+<li><strong>Outliner.</strong> Every row is an actor. Double-click it to edit the script. The eye still hides the object. H and Shift+H still work when you are not playing.</li>
+<li><strong>Content browser.</strong> Drag a mesh onto the view or onto a landscape slot. Drag a blueprint to place an actor. Double-click a mesh for collision. Double-click a blueprint or a programmable material to edit its script or shader.</li>
+<li><strong>Details.</strong> Actor type, spawn checkbox, collision summary, and Edit Script. If the actor uses a programmable material, the material section is still there for live parameters.</li>
+<li><strong>Materials.</strong> A gameplay script can set a parameter or a named state. The shader tab in this same window edits the GLSL and the parameter list. Build with AI on the material window is unchanged.</li>
+<li><strong>Collision.</strong> Overlap and hit hooks fire from these shapes during Play. BlockAll pushes a Character. OverlapAll only notifies the script. NoCollision does neither.</li>
+<li><strong>Play.</strong> Scripts start when you press Play and stop cleanly when you press Stop. They do not run while you are editing.</li>
+<li><strong>Console.</strong> The strip under the code shows Validate errors and <code>api.log</code> lines. The status bar at the bottom of MeshForge still shows editor messages.</li>
+</ul>
+<p>A script is a set of functions. You only write the ones you need.</p>
+<table><thead><tr><th>Function</th><th>When it runs</th></tr></thead><tbody>
+<tr><td><code>onStart()</code></td><td>Once, when Play begins</td></tr>
+<tr><td><code>onUpdate(dt)</code></td><td>Every frame. <code>dt</code> is seconds</td></tr>
+<tr><td><code>onOverlap(other)</code></td><td>When another actor starts touching this one</td></tr>
+<tr><td><code>onHit(other)</code></td><td>When two BlockAll shapes hit</td></tr>
+<tr><td><code>onInteract(by)</code></td><td>When the player presses E while touching this actor</td></tr>
+<tr><td><code>onEvent(name, data)</code></td><td>When any script emits that name</td></tr>
+<tr><td><code>onSpeak</code> / <code>onHear(who, text)</code></td><td>When something is said. The agent panel also sends what it speaks</td></tr>
+<tr><td><code>api.after(seconds, fn)</code></td><td>A timer</td></tr>
+</tbody></table>
+<p><code>other</code> has <code>id</code>, <code>name</code>, <code>type</code>, <code>position</code>, and <code>hasTag</code>.</p>
+<p>The whitelist on <code>api</code> is the only way out of the script:</p>
+<ul>
+<li><code>transform</code>, <code>setPosition</code>, <code>setRotation</code>, <code>setScale</code>, <code>rotate</code>, <code>move</code>, <code>moveToward</code></li>
+<li><code>components</code>, <code>materialParams</code>, <code>setMaterialParam</code>, <code>setMaterialState</code></li>
+<li><code>spawn</code>, <code>destroy</code>, <code>findActors</code></li>
+<li><code>emit</code>, <code>input</code>, <code>say</code>, <code>log</code>, <code>after</code></li>
+</ul>
+<p><code>findActors</code> can filter by type, name, tag, or spawn. <code>input</code> returns axes, jump, and interact while a Character is being driven.</p>
+<p>Templates in the editor menu: Rotate, Patrol NPC, Door trigger, Pickup, Companion idle and emotions, Level script. Pick one, then change the numbers.</p>
+<h2>4. Make a small game</h2>
+<p>This is a yard with a hut, a cover wall, a door, a pickup, a player, and a companion. You can click it together, or run the script in the next section and then change it.</p>
+<p>1. Start MeshForge. Press <strong>Play</strong> on an empty scene once so you know Stop brings you back. Press Stop.</p>
+<p>2. Open the Landscape tab. Set the map size from an agent, or leave the default, and send the landscape into the scene. The ground is one group: terrain, water, buildings, trees.</p>
+<p>3. Add a cube. In Details, leave the type as Static. Edit Collision and choose BlockAll, box. Scale it into a low wall. This is cover.</p>
+<p>4. Add a building the same way, or use <strong>Place</strong> with kind <code>building</code>. Give it BlockAll too.</p>
+<p>5. Add a thin cube in the doorway. Set collision to OverlapAll. Edit Script, choose the <strong>Door trigger</strong> template, and Save. When the Character overlaps it, the door moves up and emits <code>door</code>.</p>
+<p>6. Add a sphere. OverlapAll. Use the <strong>Pickup</strong> template. Touching it emits <code>pickup</code> and removes the sphere until Stop.</p>
+<p>7. Add a capsule. Set the type to <strong>Character</strong>. Collision becomes a Pawn capsule. This is the body you drive. Mark another small object as a spawn point in Details, or add a spawn. On Play, the Character is moved to the spawn.</p>
+<p>8. Add another capsule. Set the type to <strong>NPC/AI</strong>. Use the <strong>Companion</strong> template. It walks toward the Character. If the agent says &quot;hello&quot; or &quot;sad&quot;, the companion answers and asks its material for the happy or sad state. That state only changes the look if the mesh uses a programmable material that has those states. The Screen Face preset does.</p>
+<p>9. Press Play. Walk into the pickup and the door. Press E beside the companion. Press Stop and check that the pickup is back.</p>
+<p>To give the companion a face, assign the Screen Face programmable material, then open that material from the content browser. The script editor shows the GLSL and the parameter JSON. You can leave the shader alone and still call <code>api.setMaterialState(&#x27;happy&#x27;)</code> from the companion script.</p>
+<p>The level script is the scene root. Select nothing, or select the scene, and click Edit Script. The level template logs every event, so the door and the pickup show up in the console.</p>
+<h2>5. How an AI helps</h2>
+<p>There are four doors an AI can use. None of them stores an API key in the project. Keys stay in the Agent session.</p>
+<p><strong>Agent panel.</strong> Connect a provider, then talk. The model can only call the fixed tool list. New tools cover scripts and level building: list and read scripts, set and validate a script, attach or detach one, create a blueprint, spawn an actor, set an actor type, list actors, start and stop Play, start a new project, set the landscape size, place a primitive, set collision, add a spawn, and save the project. Older tools still move objects, edit materials, and send the landscape into the scene. Delete and New project ask you first. Each edit is one undo step. Live material changes are not undo steps, same as before.</p>
+<p><strong>Voice.</strong> If the browser has the speech API (Chrome or Edge), the Agent panel can listen and can speak replies. Spoken replies are also delivered to scripts as <code>onHear</code> while Play is running. A companion can react without you writing a chat window.</p>
+<p><strong>Ask AI in the script editor.</strong> Type a short brief under the code and press Ask AI. MeshForge sends the current script and the brief to the connected provider. You get a line diff. Accept writes it into the tab. Reject throws it away. If the reply is not a legal script, it is refused and the tab stays as it was. With no provider connected, the box says so and you edit by hand.</p>
+<p><strong>The agent API for an outside program.</strong> The same actions are on <code>window.MeshForge</code>, so a script or another program can build a level without clicking:</p>
+<p><code>newProject</code>, <code>setLandscapeSize</code>, <code>generateLandscape</code>, <code>sendLandscapeToScene</code>, <code>placePrimitive</code>, <code>setActorType</code>, <code>setCollision</code>, <code>setScript</code>, <code>addSpawn</code>, <code>createBlueprint</code>, <code>spawnActor</code>, <code>listActors</code>, <code>runPlay</code>, <code>stopPlay</code>, <code>saveProject</code>.</p>
+<p><code>scripts/build_level.mjs</code> does a whole yard this way and only calls those methods. Run it against a live MeshForge:</p>
+<pre>
+node scripts/build_level.mjs http://127.0.0.1:8000/?noautosave=1 C:\MeshForge\demo-yard.mfproj
+</pre>
+<p>On Windows, start <code>run_windows.bat</code> first so that address is open. Copy the file and add more BlockAll cubes where you want cover. That is the shape of a shooter level: a landscape, walls, spawn points, a Character, and NPC actors with scripts. MeshForge does not yet contain a gun, a health number, or a finished AI body. The Character actor is the body Play already moves. An outside AI drives the editor through this API. It does not walk around inside the level as its own puppet yet.</p>
+<p><code>setLandscapeSize</code> takes width, depth, and height in metres. The map is square, so depth uses the same edge as width. The call says so in its note. Height scales the hills.</p>
+<p><code>saveProject</code> needs a path ending in <code>.mfproj</code> and the MeshForge server, because the file is written on that computer. The zip holds <code>scene.json</code>, <code>scene.glb</code>, <code>materials.json</code>, and <code>scripts.json</code>.</p>
+<p>File ▸ Open reads that zip back as separate actors. It does not squash the level into one small mesh. <code>MeshForge.openProject(bytes or url)</code> does the same thing. Scripts are stored against the actor&#x27;s saved id, including the level, whose id stays <code>level</code>.</p>
+<p><code>sendLandscapeToScene</code> keeps the landscape&#x27;s real size. Pass <code>scale</code> or <code>size</code> when you want a different one. It no longer shrinks a large map to sit beside a small prop. The camera far plane starts at 2000 m and grows with the scene. <code>setCameraClip({ near, far })</code> sets it directly. <code>getGroundHeight(x, z)</code> reads the terrain. In Play, a Character stands on that height instead of falling to zero.</p>
+<p>A spawn can carry a team: <code>addSpawn({ name, position, team: &#x27;red&#x27; })</code>. The team is saved and shows up in <code>listActors</code>. <code>setScript</code> and <code>setCollision</code> return an error when the id does not match an actor. They do not write onto the whole level by mistake.</p>
+<p>Overlap events skip the Level actor and any mesh named Terrain or Water, so a ground plane does not count as touching every prop. Assigned materials stay visible in solid view, not only in the toon view. Matcap and wire use the material colour too.</p>
+<h2>6. Safety and limits</h2>
+<p>A script is gameplay code, not a plugin. Plugins are trusted and are not sandboxed. Scripts are.</p>
+<ul>
+<li>In the browser, Play runs each script in a <strong>Worker</strong>. The Worker is not given the page, the editor objects, or a way to reach the network. Before the script is compiled, <code>fetch</code>, <code>XMLHttpRequest</code>, <code>WebSocket</code>, and <code>importScripts</code> on that Worker are replaced with functions that throw.</li>
+<li>The script is wrapped so names such as <code>window</code>, <code>document</code>, <code>fetch</code>, <code>Function</code>, <code>globalThis</code>, <code>process</code>, and the storage APIs are local undefined values. <code>api</code> is the only object passed in.</li>
+<li>A check runs first. It rejects <code>eval</code>, <code>Function</code>, <code>constructor</code>, <code>import</code>, <code>fetch</code>, <code>document</code>, <code>window</code>, and the other names above. The word <code>eval</code> cannot be turned off by a local variable, because strict mode forbids that binding, so the checker refuses the script instead.</li>
+<li>If the Worker cannot start, MeshForge uses the same wrapper on the page thread and says so in the script console. A script that never returns can freeze the tab in that fallback. The page is still not passed in.</li>
+<li>This is not a security product. The checker and the Worker block the obvious paths. A script written to escape a Worker might still find a new one. Do not run hostile scripts from the internet.</li>
+<li>Scripts cannot read API keys, files, or another site. Logs stay in the console.</li>
+<li>Ask AI and the agent tools never write the key into the asset or the project.</li>
+</ul>
+<h2>7. What is untested</h2>
+<ul>
+<li>Not tried on Windows, on a real GPU, or with a real mouse. The logic tests and a headless Chrome smoke test were run on Linux.</li>
+<li><code>scripts/build_level.mjs</code> was run against an in-memory editor that implements the same method names, and the live page was checked for place, type, script, Play (Worker), Stop, and landscape size. A full <code>.mfproj</code> was not written through <code>run_windows.bat</code>.</li>
+<li>Ask AI was checked with a refused network script and a diff. It was not sent to a live provider.</li>
+<li>The Worker was probed in a Node worker and by pressing Play in headless Chrome. Nobody tried to break out of it on purpose beyond the blocked names.</li>
+<li>Walking a Character across the landscape, the collision preview, and spoken <code>onHear</code> were not sat through by a person.</li>
+<li>A programmable material state on a companion was not watched in the view during Play.</li>
+</ul>
+</article><article class="appendix"><h1>Appendix. Keyboard and mouse shortcuts</h1>
+<p>These are the shortcuts the program actually handles. They were taken from the key and mouse handlers. While a text box, a dropdown, or the script code area is focused, the main editor ignores letter keys so you can type. The script window keeps Ctrl+Enter and Ctrl+S.</p>
+<p>The camera code contains arrow-key panning, but MeshForge never turns that listener on. During Play the arrows move the Character instead. They do not pan the view.</p>
+<p>Ctrl or Cmd with Numpad 1, 3, or 7 (or the matching top-row key) snaps the opposite view: back, left, or bottom. The corner axis widget does the same when you click the far ball.</p>
+<h3>Global</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Ctrl+Z or Cmd+Z</td><td>Undo</td></tr>
+<tr><td>Ctrl+Shift+Z or Cmd+Shift+Z</td><td>Redo</td></tr>
+<tr><td>Ctrl+Y or Cmd+Y</td><td>Redo</td></tr>
+<tr><td>Click a ball on the corner axis widget</td><td>Snap the view to that side, including back, left, and bottom</td></tr>
+<tr><td>Numpad 1, or the 1 key outside Edit Mode</td><td>Front view. Ctrl or Cmd shows the back</td></tr>
+<tr><td>Numpad 3, or the 3 key outside Edit Mode</td><td>Right view. Ctrl or Cmd shows the left</td></tr>
+<tr><td>Numpad 7, or the 7 key outside Edit Mode</td><td>Top view. Ctrl or Cmd shows the bottom</td></tr>
+<tr><td>Numpad 5, or the 5 key outside Sculpt Mode</td><td>Perspective / orthographic</td></tr>
+<tr><td>Numpad decimal, period, or Home</td><td>Frame the selection</td></tr>
+<tr><td>Z, when you are not mid-transform</td><td>Wireframe / solid</td></tr>
+<tr><td>Middle mouse drag</td><td>Orbit</td></tr>
+<tr><td>Shift+middle mouse</td><td>Pan</td></tr>
+<tr><td>Right mouse drag</td><td>Pan</td></tr>
+<tr><td>Shift+right mouse, or Ctrl/Cmd+right mouse</td><td>Orbit</td></tr>
+<tr><td>Mouse wheel</td><td>Zoom</td></tr>
+<tr><td>Left mouse on the Orbit, Pan, or Zoom shelf tool</td><td>That navigation action. Shift, Ctrl, or Cmd swaps orbit and pan</td></tr>
+<tr><td>Left mouse on Select, Move, Rotate, or Scale</td><td>Pick or drag the gizmo. The camera does not take the left button</td></tr>
+</tbody></table>
+<h3>Object Mode</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Left click</td><td>Select. Shift toggles</td></tr>
+<tr><td>Left drag with the Select tool</td><td>Box select. Shift adds</td></tr>
+<tr><td>Right click</td><td>Menu: Edit Script, Edit Collision, Group, Ungroup, Join, Select Similar</td></tr>
+<tr><td>Double-click an object</td><td>Open its script</td></tr>
+<tr><td>G, then move the mouse</td><td>Move. Enter or Space confirms. Escape cancels. Right click cancels. Left click confirms</td></tr>
+<tr><td>R</td><td>Rotate, same confirm and cancel</td></tr>
+<tr><td>S</td><td>Scale, same confirm and cancel</td></tr>
+<tr><td>X, Y, or Z during G/R/S</td><td>Lock that axis. Press the same key again to unlock</td></tr>
+<tr><td>Ctrl held during G/R/S</td><td>Snap. 0.1 units, 15 degrees, or 0.1 scale. Release Ctrl to stop snapping</td></tr>
+<tr><td>G, R, or S during a gesture</td><td>Switch the gesture</td></tr>
+<tr><td>A</td><td>Select all, or clear if everything is already selected</td></tr>
+<tr><td>Alt+A</td><td>Clear the selection</td></tr>
+<tr><td>Escape</td><td>Clear the selection, or cancel a gesture</td></tr>
+<tr><td>H</td><td>Hide the selection</td></tr>
+<tr><td>Shift+H</td><td>Show hidden objects</td></tr>
+<tr><td>Delete</td><td>Delete the selection</td></tr>
+<tr><td>Shift+D</td><td>Duplicate the selection</td></tr>
+<tr><td>Tab</td><td>Edit Mode. From Sculpt or Pose, Tab returns to Object Mode</td></tr>
+<tr><td>Drag a gizmo arrow, ring, or handle</td><td>Move, rotate, or scale when that shelf tool is on</td></tr>
+</tbody></table>
+<h3>Edit Mode</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>1, 2, 3 on the top row</td><td>Vertices, edges, faces. Numpad 1 and 3 still change the view</td></tr>
+<tr><td>Left click</td><td>Select the element under the pointer. Shift toggles</td></tr>
+<tr><td>Left drag</td><td>Box select visible elements. Shift adds</td></tr>
+<tr><td>A, Alt+A, G, R, S, X, Y, Z, Ctrl, Enter, Space, Escape</td><td>Same as Object Mode, on the selected elements</td></tr>
+<tr><td>Tab</td><td>Back to Object Mode</td></tr>
+<tr><td>U, in Edit Mode or the UV workspace, when the pointer is not over the 2D view</td><td>Open the UV menu. Escape closes it</td></tr>
+</tbody></table>
+<h3>Sculpt Mode</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Left drag on the model</td><td>Sculpt with the current brush</td></tr>
+<tr><td>Shift held while stroking</td><td>Smooth</td></tr>
+<tr><td>Alt held while stroking</td><td>Invert the brush</td></tr>
+<tr><td>1 to 0</td><td>Standard, Clay, Clay Buildup, Move, Smooth, Chisel, Carve, Pen, Inflate, Pinch</td></tr>
+<tr><td>Shift+1, Shift+2, Shift+3</td><td>Flatten, Crease, Scrape. The handler also accepts the shifted symbols !, @, &quot;, #, and £</td></tr>
+<tr><td>M</td><td>Mask brush</td></tr>
+<tr><td>Alt+M</td><td>Clear the mask</td></tr>
+<tr><td>Ctrl+I or Cmd+I</td><td>Invert the mask</td></tr>
+<tr><td>S, then move the mouse, then release S</td><td>Brush size</td></tr>
+<tr><td>U, then move the mouse, then release U</td><td>Strength</td></tr>
+<tr><td>[ or {</td><td>Smaller radius. With Shift, lower strength</td></tr>
+<tr><td>] or }</td><td>Larger radius. With Shift, higher strength</td></tr>
+<tr><td>X</td><td>X symmetry on or off</td></tr>
+<tr><td>L</td><td>Lazy mouse on or off</td></tr>
+<tr><td>F</td><td>Cycle falloff</td></tr>
+<tr><td>D</td><td>Adaptive detail on or off</td></tr>
+<tr><td>H</td><td>Show or hide the sculpt shortcut list</td></tr>
+<tr><td>Tab</td><td>Back to Object Mode</td></tr>
+<tr><td>Ctrl+Z</td><td>Undo a stroke, through the normal undo keys</td></tr>
+<tr><td>Pen pressure</td><td>Strength by default. Size if that checkbox is on</td></tr>
+</tbody></table>
+<h3>UV 2D view</h3>
+<p>These apply while the pointer is over the 2D UV view.</p>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Mouse wheel</td><td>Zoom</td></tr>
+<tr><td>Middle or right drag</td><td>Pan</td></tr>
+<tr><td>Left click</td><td>Select the island under the pointer. Shift adds</td></tr>
+<tr><td>Left drag</td><td>Box select islands</td></tr>
+<tr><td>G, R, S</td><td>Move, rotate, or scale the selection</td></tr>
+<tr><td>X or Y during that gesture</td><td>Constrain to that axis</td></tr>
+<tr><td>Enter or left click</td><td>Confirm</td></tr>
+<tr><td>Escape or right click</td><td>Cancel</td></tr>
+<tr><td>A</td><td>Select all islands</td></tr>
+<tr><td>Alt+A</td><td>Clear</td></tr>
+<tr><td>Home</td><td>Fit the islands in the view</td></tr>
+<tr><td>B</td><td>Brush tool</td></tr>
+</tbody></table>
+<h3>Shader and material paint</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>P</td><td>Turn material paint on or off. Only in the Shader workspace, or when paint is already on. Not in Landscape or Sculpt</td></tr>
+<tr><td>Left drag on a mesh</td><td>Paint face material, vertex colour, or the texture, matching the paint mode</td></tr>
+<tr><td>Left drag off the mesh</td><td>Orbit, as usual</td></tr>
+<tr><td>Pen pressure</td><td>Used when the pressure checkbox is on</td></tr>
+</tbody></table>
+<h3>Landscape</h3>
+<p>Only while the Landscape workspace is open.</p>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Left drag with Brush or Erase</td><td>Paint the map</td></tr>
+<tr><td>Left drag with Rect or Circle</td><td>Draw a region</td></tr>
+<tr><td>Left click or drag with Lasso</td><td>Add points. A long drag draws freehand and closes on release</td></tr>
+<tr><td>Double-click</td><td>Close the lasso</td></tr>
+<tr><td>Enter</td><td>Close the lasso draft</td></tr>
+<tr><td>Escape</td><td>Cancel the draft</td></tr>
+</tbody></table>
+<h3>Play</h3>
+<p>Only while Play is running, and not while typing in a text box.</p>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Escape</td><td>Stop Play and restore transforms</td></tr>
+<tr><td>W, A, S, D or the arrow keys</td><td>Move the Character actor</td></tr>
+<tr><td>Space</td><td>Jump</td></tr>
+<tr><td>E</td><td>Interact with overlapping actors</td></tr>
+</tbody></table>
+<h3>Script editor</h3>
+<table><thead><tr><th>Input</th><th>Action</th></tr></thead><tbody>
+<tr><td>Ctrl+Enter or Cmd+Enter</td><td>Validate the open script</td></tr>
+<tr><td>Ctrl+S or Cmd+S</td><td>Save the open script into the project</td></tr>
+<tr><td>Ctrl+Z inside the code box</td><td>Undo typing in that box</td></tr>
+<tr><td>Drag the title</td><td>Move the window, unless it is docked</td></tr>
+<tr><td>Drag the corner</td><td>Resize</td></tr>
+</tbody></table>
+</article></body></html>
