@@ -1,8 +1,6 @@
 """Runner interface: where an engine executes. Input is a preprocessed RGB image; output is {name: Trimesh}."""
 from __future__ import annotations
 import io
-import trimesh
-from PIL import Image
 
 
 class Runner:
@@ -12,15 +10,16 @@ class Runner:
     def status(self) -> dict:  # shown in the UI: is it usable, on what device
         return {"id": self.id, "label": self.label, "ready": True}
 
-    def run(self, engine_id: str, image: Image.Image, params: dict, progress) -> dict:
+    def run(self, engine_id: str, image, params: dict, progress) -> dict:
         raise NotImplementedError
 
 
-def png_bytes(img: Image.Image) -> bytes:
+def png_bytes(img) -> bytes:
     b = io.BytesIO(); img.save(b, format="PNG"); return b.getvalue()
 
 
 def glb_to_parts(data: bytes) -> dict:
+    import trimesh
     loaded = trimesh.load(io.BytesIO(data), file_type="glb", force=None)
     if isinstance(loaded, trimesh.Scene):
         parts = {}

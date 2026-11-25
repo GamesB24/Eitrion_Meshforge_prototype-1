@@ -2,6 +2,8 @@
 // A blueprint is an asset. Placing it makes an actor that inherits from it.
 // A field listed in overrides belongs to that actor and is not replaced when the blueprint changes.
 
+import { normaliseComponent, publicComponents } from './components.js';
+
 export const ACTOR_TYPES = ['static', 'character', 'npc', 'level'];
 
 export const ACTOR_LABELS = {
@@ -38,6 +40,7 @@ export function normaliseActor(raw, fallback = 'static') {
   base.spawn = !!raw.spawn;
   base.tags = Array.isArray(raw.tags) ? raw.tags.map((t) => String(t)).slice(0, 16) : [];
   base.overrides = Array.isArray(raw.overrides) ? raw.overrides.map((k) => String(k)) : [];
+  base.componentsOverride = !!raw.componentsOverride;
   const tagged = base.tags.find((t) => t.startsWith('team:'));
   base.team = raw.team ? String(raw.team) : (tagged ? tagged.slice(5) : null);
   if (base.team && !base.tags.includes('team:' + base.team)) base.tags.push('team:' + base.team);
@@ -56,6 +59,7 @@ export function blankBlueprint(input = {}) {
     script: typeof input.script === 'string' ? input.script : '',
     collision: input.collision ? JSON.parse(JSON.stringify(input.collision)) : null,
     tags: Array.isArray(input.tags) ? input.tags.map((t) => String(t)) : [],
+    components: publicComponents(input.components),
   };
 }
 
@@ -82,7 +86,13 @@ export function instanceFromBlueprint(blueprint, overrides = {}) {
     actor.tags = overrides.tags.map((t) => String(t));
     over.push('tags');
   }
+  const ownComponents = Array.isArray(overrides.components);
+  if (ownComponents) {
+    actor.componentsOverride = true;
+    over.push('components');
+  }
   actor.overrides = over;
+  const components = publicComponents(ownComponents ? overrides.components : bp.components).map((c) => normaliseComponent({ ...c, id: c.id })).filter(Boolean);
   return {
     actor,
     script: actor.scriptOverride ? overrides.script : bp.script,
@@ -90,6 +100,7 @@ export function instanceFromBlueprint(blueprint, overrides = {}) {
     primitive: bp.primitive,
     meshAssetId: bp.meshAssetId,
     name: overrides.name || bp.name,
+    components,
   };
 }
 
@@ -105,5 +116,6 @@ export function publicActor(actor) {
     tags: row.tags.slice(),
     overrides: row.overrides.slice(),
     team: row.team,
+    componentsOverride: row.componentsOverride,
   };
 }

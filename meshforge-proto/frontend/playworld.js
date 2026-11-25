@@ -3,6 +3,9 @@
 // Stop puts every transform back and removes actors that appeared during Play.
 
 import { normaliseActor } from './actors.js';
+import {
+  applyBrainCommand, consumeBrainInterval, materialEventsFrom, publicComponents, resetComponentRuntime, stepActorBehaviours,
+} from './components.js';
 import { isOverlapTarget } from './playrules.js';
 import { createSession } from './scriptbox.js';
 
@@ -28,7 +31,8 @@ function blocking(actor) {
   return actor.collision?.enabled !== false && preset === 'BlockAll';
 }
 
-export function createPlayWorld() {
+export function createPlayWorld(opts = {}) {
+  const bus = opts.bus || null;
   const actors = new Map();
   const sessions = new Map();
   const logs = [];
@@ -49,6 +53,7 @@ export function createPlayWorld() {
       actor: normaliseActor(raw.actor || { type: raw.type || 'static' }),
       script: typeof raw.script === 'string' ? raw.script : '',
       collision: raw.collision ? clone(raw.collision) : { enabled: true, preset: 'BlockAll', type: 'box', size: [0.5, 0.5, 0.5] },
+      components: publicComponents(raw.components),
       tags: raw.tags || raw.actor?.tags || [],
       params: {},
       materialState: '',
@@ -74,6 +79,7 @@ export function createPlayWorld() {
       blueprintId: actor.actor.blueprintId,
       scriptId: actor.actor.scriptId,
       collision: clone(actor.collision),
+      components: publicComponents(actor.components),
       script: actor.script,
       params: { ...actor.params },
       materialState: actor.materialState,
@@ -100,11 +106,7 @@ export function createPlayWorld() {
       actors: list().filter((a) => !a.dead && a.id !== actor.id).map((a) => ({
         id: a.id, name: a.name, type: a.type, spawn: a.spawn, tags: a.tags, position: a.position.slice(),
       })),
-      components: [
-        { type: 'mesh', name: actor.name },
-        { type: 'collision', preset: actor.collision?.preset || 'BlockAll' },
-        actor.script ? { type: 'script', name: actor.name } : null,
-      ].filter(Boolean),
+      components: publicComponents(actor.components),
       materialParams: actor.params,
       input,
     };
@@ -151,6 +153,15 @@ export function createPlayWorld() {
     sessions.clear();
     overlapsPrev.clear();
     logs.length = 0;
+    events.length = 0;
+    for (const actor of list()) {
+      resetComponentRuntime(actor.components);
+      for (const ev of materialEventsFrom(actor.components, actor.id)) {
+        actor.materialState = ev.state || actor.materialState;
+        events.push({ name: 'component:material', data: ev, from: actor.id });
+        bus?.emit('component:material', ev);
+      }
+    }
     for (const actor of list()) {
       if (!actor.script || actor.dead) continue;
       const session = createSession(actor.script);
@@ -198,6 +209,9 @@ export function createPlayWorld() {
       if (inp.jump && actor.position[1] <= 0.001) actor.position[1] = 1.2;
       else if (actor.position[1] > 0) actor.position[1] = Math.max(0, actor.position[1] - 6 * step);
     }
+    const liveActors = list().filter((a) => !a.dead);
+    stepActorBehaviours(liveActors, step);
+    stepBrains(liveActors, step);
     for (const actor of list()) {
       if (actor.dead) continue;
       const session = sessions.get(actor.id);
@@ -250,6 +264,86 @@ export function createPlayWorld() {
     return { id: actor.id, name: actor.name, type: actor.type, tags: actor.tags.slice(), hasTag: (t) => actor.tags.includes(t), position: actor.position.slice() };
   }
 
+  function applyEffects(actor, effects) {
+    for (const effect of effects || []) {
+      if (effect.op === 'say') {
+        logs.push(actor.name + ' says: ' + effect.text);
+        events.push({ name: 'say', data: { text: effect.text, from: actor.id }, from: actor.id });
+        const voice = (actor.components || []).find((c) => c.type === 'voice');
+        bus?.emit('voice:speak', { actorId: actor.id, text: effect.text });
+        if (voice?.enabled && voice.speak !== false) deliver(actor, 'onSpeak', [effect.text]);
+      } else if (effect.op === 'emit') {
+        events.push({ name: effect.name, data: effect.data, from: actor.id });
+        bus?.emit(effect.name, effect.data);
+      } else if (effect.op === 'material') {
+        events.push({ name: 'component:material', data: effect, from: actor.id });
+        bus?.emit('component:material', effect);
+      } else if (effect.op === 'collision' && effect.collision) {
+        actor.collision = { ...actor.collision, ...effect.collision };
+      }
+    }
+  }
+  function takeBrainReply(actor, reply) {
+    if (!reply) return;
+    if (reply.ok === false && !reply.command) {
+      logs.push(actor.name + ' brain: ' + (reply.error || 'no command'));
+      return;
+    }
+    const result = applyBrainCommand(actor, reply.command || reply, list());
+    if (!result.ok) { logs.push(actor.name + ' brain: ' + result.error); return; }
+    applyEffects(actor, result.effects);
+  }
+  function stepBrains(liveActors, dt) {
+    for (const actor of liveActors) {
+      for (const comp of actor.components || []) {
+        if (!consumeBrainInterval(comp, dt)) continue;
+        if (!bus) {
+          if (!comp._noted) { comp._noted = true; logs.push(actor.name + ': no AI provider is connected'); }
+          continue;
+        }
+        const replies = bus.emit('ai:brain', {
+          actor: { id: actor.id, name: actor.name, type: actor.type, position: actor.position.slice() },
+          goal: comp.goal || '',
+        });
+        if (!replies.length) {
+          if (!comp._noted) { comp._noted = true; logs.push(actor.name + ': no AI provider is connected'); }
+          continue;
+        }
+        for (const reply of replies) {
+          if (reply && typeof reply.then === 'function') {
+            Promise.resolve(reply).then((data) => { if (playing) takeBrainReply(actor, data); });
+          } else takeBrainReply(actor, reply);
+        }
+      }
+    }
+  }
+  function voiceOf(actor) { return (actor?.components || []).find((c) => c.type === 'voice') || null; }
+  function hear(id, who, text) {
+    if (!playing) return { ok: false, error: 'Not playing' };
+    const actor = actors.get(id);
+    if (!actor) return { ok: false, error: 'No actor' };
+    const voice = voiceOf(actor);
+    if (!voice?.enabled || voice.hear === false) return { ok: false, error: 'Voice is off' };
+    const said = String(text || '');
+    const speaker = who || 'mic';
+    events.push({ name: 'voice:hear', data: { who: speaker, text: said }, from: actor.id });
+    bus?.emit('voice:hear', { actorId: actor.id, who: speaker, text: said });
+    deliver(actor, 'onHear', [speaker, said]);
+    return { ok: true, text: said };
+  }
+  function speak(id, text) {
+    if (!playing) return { ok: false, error: 'Not playing' };
+    const actor = actors.get(id);
+    if (!actor) return { ok: false, error: 'No actor' };
+    const voice = voiceOf(actor);
+    if (!voice?.enabled || voice.speak === false) return { ok: false, error: 'Voice is off' };
+    const said = String(text || '');
+    events.push({ name: 'voice:speak', data: { text: said }, from: actor.id });
+    bus?.emit('voice:speak', { actorId: actor.id, text: said });
+    deliver(actor, 'onSpeak', [said]);
+    return { ok: true, text: said };
+  }
+
   function deliver(actor, hook, args) {
     const session = sessions.get(actor.id);
     if (!session) return;
@@ -269,7 +363,7 @@ export function createPlayWorld() {
       actor.actor.scriptOverride = true;
       return { ok: true, id };
     },
-    play, stop, tick,
+    play, stop, tick, hear, speak,
     get playing() { return playing; },
     logs: () => logs.slice(),
     events: () => events.slice(),

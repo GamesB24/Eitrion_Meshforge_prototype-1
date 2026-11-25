@@ -24,7 +24,8 @@ Planned engines are listed greyed-out in the UI from `engines/__init__.py`.
 `Runner.run(engine_id, image, params, progress) -> parts`, `Runner.status()` for the UI.
 - `local` - in-process; CUDA automatically if `torch.cuda.is_available()`, else CPU.
 - `cloud` - wraps a `CloudAdapter.generate(engine, png, params, progress) -> glb bytes`, chosen by `MESHFORGE_CLOUD`:
-  - `mock` (default) - fake progress, returns a 3-part demo mesh; free, for demos.
+  - unset - the runner fails with a clear error and does not return a mesh.
+  - `mock` - explicit test flag. Fake progress, returns a 3-part demo mesh; free, for tests.
   - `modal` - **coded but untested**; `cloud/modal_app.py` (L4 GPU, weights cached in a Modal Volume). Creds only from `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET` or `modal token new`.
   - `remote` - another MeshForge server on any GPU box via SSH tunnel (`MESHFORGE_REMOTE_URL`). This is the "remote SSH" runner.
 Raw meshes come back from the cloud; post-processing always runs locally on CPU, so it is identical for every runner.

@@ -3,6 +3,10 @@
 // Original MIT code.
 
 import { blankActor, blankBlueprint, instanceFromBlueprint, isActorType, normaliseActor, publicActor } from './actors.js';
+import { createBus } from './bus.js';
+import {
+  addComponentTo, collisionFromComponent, componentFromCollision, patchComponent, publicComponents, removeComponentFrom,
+} from './components.js';
 import { landscapeSendScale } from './playrules.js';
 import { createPlayWorld } from './playworld.js';
 import { templateSource, validateScript } from './scriptbox.js';
@@ -21,6 +25,7 @@ export function createMemoryForge() {
   let projectName = 'Untitled';
   let saved = null;
   let live = null;
+  const bus = createBus();
 
   function remember(label, undo, redo) {
     history.push({ label, undo, redo });
@@ -41,6 +46,7 @@ export function createMemoryForge() {
       scale: row.scale.slice(),
       collision: clone(row.collision),
       script: row.script,
+      components: publicComponents(row.components),
       scriptId: row.actor.scriptId,
       blueprintId: row.actor.blueprintId,
       kind: row.kind,
@@ -106,6 +112,7 @@ export function createMemoryForge() {
       id, name: spec.name || kind, kind, position: (spec.position || [0, 0, 0]).slice(),
       rotation: (spec.rotation || [0, 0, 0]).slice(), scale: spec.scale ? [].concat(spec.scale).slice() : [1, 1, 1],
       actor, collision: clone(spec.collision) || defaultCollision(actor.type, kind), script: spec.script || '',
+      components: publicComponents(spec.components),
     };
     if (row.scale.length === 1) row.scale = [row.scale[0], row.scale[0], row.scale[0]];
     remember('Place ' + row.name, () => { const i = actors.findIndex((a) => a.id === id); if (i >= 0) actors.splice(i, 1); }, () => actors.push(row));
@@ -125,8 +132,14 @@ export function createMemoryForge() {
     const row = find(id);
     if (!row) return { ok: false, error: 'No actor' };
     const before = clone(row.collision);
+    const beforeComponents = publicComponents(row.components);
     const after = { ...before, ...clone(patch) };
-    remember('Collision', () => { row.collision = before; }, () => { row.collision = after; });
+    const apply = (col, list) => {
+      row.collision = col;
+      row.components = list;
+    };
+    const nextComponents = beforeComponents.map((c) => (c.type === 'collision' ? componentFromCollision(after, c.id) : c));
+    remember('Collision', () => apply(before, beforeComponents), () => apply(after, nextComponents));
     return { ok: true, id: row.id, collision: clone(after) };
   }
 
@@ -200,7 +213,9 @@ export function createMemoryForge() {
       id, name: spec.name || inst.name, kind: inst.primitive, position: (spec.position || [0, 0, 0]).slice(),
       rotation: [0, 0, 0], scale: (spec.scale || [1, 1, 1]).slice(),
       actor: inst.actor, collision: inst.collision || defaultCollision(inst.actor.type, inst.primitive), script: inst.script || '',
+      components: publicComponents(inst.components),
     };
+    row.actor.componentsOverride = true;
     row.actor.blueprintId = bp.id;
     remember('Spawn actor', () => { const i = actors.findIndex((a) => a.id === id); if (i >= 0) actors.splice(i, 1); }, () => actors.push(row));
     return { ok: true, id, name: row.name, type: row.actor.type, blueprintId: bp.id };
@@ -208,13 +223,79 @@ export function createMemoryForge() {
 
   function listActors() { return actors.map(actorRow); }
 
+  function componentOwner(id) {
+    const row = find(id);
+    if (row) return { kind: 'actor', id: row.id, row, blueprint: false };
+    const bp = blueprints.find((b) => b.id === id || b.name === id);
+    if (bp) return { kind: 'blueprint', id: bp.id, row: bp, blueprint: true };
+    return null;
+  }
+  function listOf(own) { return publicComponents(own.row.components); }
+  function writeList(own, list, collision) {
+    own.row.components = publicComponents(list);
+    if (!own.blueprint && collision) own.row.collision = clone(collision);
+    if (own.blueprint) return;
+    own.row.actor.componentsOverride = true;
+    if (!own.row.actor.overrides.includes('components')) own.row.actor.overrides.push('components');
+  }
+  function collisionFor(list, fallback) {
+    const comp = (list || []).find((c) => c.type === 'collision');
+    return comp ? collisionFromComponent(comp) : fallback;
+  }
+  function listComponents(id) {
+    const own = componentOwner(id);
+    if (!own) return { ok: false, error: 'No actor or blueprint' };
+    return { ok: true, id: own.id, kind: own.kind, components: listOf(own) };
+  }
+  function addComponent(id, spec = {}) {
+    const own = componentOwner(id);
+    if (!own) return { ok: false, error: 'No actor or blueprint' };
+    const raw = { ...spec };
+    if (raw.type === 'collision' && !raw.preset && !own.blueprint) Object.assign(raw, componentFromCollision(own.row.collision));
+    if (raw.type === 'mesh' && !raw.primitive) raw.primitive = own.row.kind || own.row.primitive || 'cube';
+    const before = listOf(own);
+    const beforeCol = own.blueprint ? null : clone(own.row.collision);
+    const added = addComponentTo(before, raw);
+    if (!added.ok) return added;
+    const col = collisionFor(added.components, beforeCol);
+    remember('Add component', () => writeList(own, before, beforeCol), () => writeList(own, added.components, col));
+    return { ok: true, id: own.id, kind: own.kind, component: added.component, components: listOf(own) };
+  }
+  function removeComponent(id, componentId) {
+    const own = componentOwner(id);
+    if (!own) return { ok: false, error: 'No actor or blueprint' };
+    const before = listOf(own);
+    const beforeCol = own.blueprint ? null : clone(own.row.collision);
+    const removed = removeComponentFrom(before, componentId);
+    if (!removed.ok) return removed;
+    let col = beforeCol;
+    if (!own.blueprint && removed.component?.type === 'collision') col = { enabled: false, preset: 'NoCollision', type: 'none', size: beforeCol?.size || [0.5, 0.5, 0.5] };
+    remember('Remove component', () => writeList(own, before, beforeCol), () => writeList(own, removed.components, col));
+    return { ok: true, id: own.id, component: removed.component, components: listOf(own) };
+  }
+  function setComponent(id, componentId, patch = {}) {
+    const own = componentOwner(id);
+    if (!own) return { ok: false, error: 'No actor or blueprint' };
+    const before = listOf(own);
+    const beforeCol = own.blueprint ? null : clone(own.row.collision);
+    const patched = patchComponent(before, componentId, patch);
+    if (!patched.ok) return patched;
+    const col = collisionFor(patched.components, beforeCol);
+    remember('Edit component', () => writeList(own, before, beforeCol), () => writeList(own, patched.components, col));
+    if (!own.blueprint) {
+      const mat = patched.component?.type === 'material' ? patched.component : null;
+      if (mat) bus.emit('component:material', { actorId: own.id, materialId: mat.materialId, state: mat.state, slot: mat.slot });
+    }
+    return { ok: true, id: own.id, component: patched.component, components: listOf(own) };
+  }
   function runPlay() {
-    live = createPlayWorld();
+    live = createPlayWorld({ bus });
     for (const row of actors) {
       live.addActor({
         id: row.id, name: row.name, type: row.actor.type, position: row.position.slice(),
         rotation: row.rotation.slice(), scale: row.scale.slice(), actor: row.actor,
         script: row.script, collision: row.collision, tags: row.actor.tags,
+        components: publicComponents(row.components),
       });
     }
     return live.play();
@@ -223,6 +304,10 @@ export function createMemoryForge() {
     const result = live ? live.stop() : { ok: true, playing: false };
     live = null;
     return result;
+  }
+  function tickPlay(dt, input) {
+    if (!live) return { ok: false, error: 'Not playing' };
+    return live.tick(dt, input);
   }
 
   function listScriptables() {
@@ -253,7 +338,10 @@ export function createMemoryForge() {
         version: 1, generator: 'MeshForge 8.0', name: projectName, units: 'm',
         landscape, objects: actors.map(actorRow),
       }, null, 2),
-      'scripts.json': JSON.stringify({ version: 1, scripts, blueprints }, null, 2),
+      'scripts.json': JSON.stringify({
+        version: 1, scripts,
+        blueprints: blueprints.map((bp) => ({ ...bp, components: publicComponents(bp.components) })),
+      }, null, 2),
       'materials.json': '[]',
     };
   }
@@ -273,10 +361,11 @@ export function createMemoryForge() {
       actors.push({
         id: o.id, name: o.name, kind: o.kind, position: o.position, rotation: o.rotation, scale: o.scale,
         actor: normaliseActor(o.actor), collision: o.collision, script: o.script || '',
+        components: publicComponents(o.components),
       });
     }
     scripts.splice(0, scripts.length, ...(pack.scripts || []));
-    blueprints.splice(0, blueprints.length, ...(pack.blueprints || []));
+    blueprints.splice(0, blueprints.length, ...(pack.blueprints || []).map((bp) => blankBlueprint(bp)));
     if (scene.landscape) Object.assign(landscape, scene.landscape);
     projectName = scene.name || projectName;
     return { ok: true, actors: actors.length };
@@ -285,7 +374,9 @@ export function createMemoryForge() {
   return {
     newProject, setLandscapeSize, generateLandscape, sendLandscapeToScene, placePrimitive,
     setActorType, setCollision, setScript, attachScript, detachScript, addSpawn,
-    createBlueprint, spawnActor, listActors, listScriptables, getScript, runPlay, stopPlay,
+    createBlueprint, spawnActor, listActors, listScriptables, getScript, runPlay, stopPlay, tickPlay,
+    listComponents, addComponent, removeComponent, setComponent,
+    get bus() { return bus; },
     validateScript: validate, scriptTemplate: templateSource, saveProject, loadProject, projectFiles,
     undo() { const step = history.pop(); if (step) step.undo(); return !!step; },
     get history() { return history.map((h) => h.label); },

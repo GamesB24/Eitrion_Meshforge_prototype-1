@@ -39,6 +39,8 @@ Every object in the scene is an actor. The type is Static, Character, NPC/AI, or
 
 Collision comes with the actor. Presets are BlockAll, OverlapAll, NoCollision, Pawn, and Water. Shapes are box, sphere, capsule, convex, and complex. Double-click a mesh in the content browser to open the collision editor. Right-click an actor and choose **Edit Collision**, or use the button in Details. Turn on **Collision** in the view header to see the shapes. A Character or NPC defaults to a Pawn capsule. A spawn point defaults to no collision.
 
+Components sit on the actor as well. The Actor panel has a Components section. A component is mesh, collision (the same collision as above), material (a programmable material plus a state, so an emotion can switch a face), behaviour (wander, patrol, follow, face target, or idle), AI brain, or voice. Voice is off until you turn it on. Behaviours run during Play from that data. They are not scripts. The brain can drive that one actor during Play through the agent's allowed actions, and it cannot paste in its own code. A blueprint can store the same list. Placing it copies the components onto the new actor. See docs/components.md. An animation timeline and an armature fitter are not in this version.
+
 **Play** runs the open scene. **Stop** puts transforms back and deletes anything a script spawned during Play. Escape also stops. Only a Character actor walks with the keys. WASD or the arrow keys move it. Space jumps. E calls `onInteract` on actors it is touching.
 
 ## 3. How a script meets the rest of the editor
@@ -102,7 +104,7 @@ The level script is the scene root. Select nothing, or select the scene, and cli
 
 There are four doors an AI can use. None of them stores an API key in the project. Keys stay in the Agent session.
 
-**Agent panel.** Connect a provider, then talk. The model can only call the fixed tool list. New tools cover scripts and level building: list and read scripts, set and validate a script, attach or detach one, create a blueprint, spawn an actor, set an actor type, list actors, start and stop Play, start a new project, set the landscape size, place a primitive, set collision, add a spawn, and save the project. Older tools still move objects, edit materials, and send the landscape into the scene. Delete and New project ask you first. Each edit is one undo step. Live material changes are not undo steps, same as before.
+**Agent panel.** Connect a provider, then talk. The model can only call the fixed tool list. New tools cover scripts and level building: list and read scripts, set and validate a script, attach or detach one, create a blueprint, spawn an actor, set an actor type, list actors, list, add, remove, and edit components, start and stop Play, start a new project, set the landscape size, place a primitive, set collision, add a spawn, and save the project. Older tools still move objects, edit materials, and send the landscape into the scene. Delete and New project ask you first. Each edit is one undo step. Live material changes are not undo steps, same as before. Materials and components talk through `MeshForge.bus`. The material editor does not store or call the plugin's server address itself.
 
 **Voice.** If the browser has the speech API (Chrome or Edge), the Agent panel can listen and can speak replies. Spoken replies are also delivered to scripts as `onHear` while Play is running. A companion can react without you writing a chat window.
 
@@ -118,7 +120,7 @@ There are four doors an AI can use. None of them stores an API key in the projec
 node scripts/build_level.mjs http://127.0.0.1:8000/?noautosave=1 C:\MeshForge\demo-yard.mfproj
 ```
 
-On Windows, start `run_windows.bat` first so that address is open. Copy the file and add more BlockAll cubes where you want cover. That is the shape of a shooter level: a landscape, walls, spawn points, a Character, and NPC actors with scripts. MeshForge does not yet contain a gun, a health number, or a finished AI body. The Character actor is the body Play already moves. An outside AI drives the editor through this API. It does not walk around inside the level as its own puppet yet.
+On Windows, start `run_windows.bat` first so that address is open. Copy the file and add more BlockAll cubes where you want cover. That is the shape of a shooter level: a landscape, walls, spawn points, a Character, and NPC actors with scripts. MeshForge does not yet contain a gun, a health number, or a finished shooter. Companion drone and kiosk startup are on hold. The Character actor is the body Play already moves. An AI brain component can move its own actor during Play, and only through the whitelisted actions. It is not a free script.
 
 `setLandscapeSize` takes width, depth, and height in metres. The map is square, so depth uses the same edge as width. The call says so in its note. Height scales the hills.
 

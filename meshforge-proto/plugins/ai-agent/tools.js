@@ -45,7 +45,11 @@ export const TOOLS = [
   { name: 'createBlueprint', description: 'Create a blueprint asset. actorType is static, character, npc, or level. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' }, actorType: { type: 'string' }, primitive: { type: 'string' }, script: { type: 'string' }, collision: { type: 'object' } }, required: ['name'] } },
   { name: 'spawnActor', description: 'Place an actor from a blueprint. One undo step.', parameters: { type: 'object', properties: { blueprint: { type: 'string' }, name: { type: 'string' }, position: { type: 'array' }, scale: { type: 'array' } }, required: ['blueprint'] } },
   { name: 'setActorType', description: 'Change an actor type: static, character, npc, or level. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, type: { type: 'string' } }, required: ['id', 'type'] } },
-  { name: 'listActors', description: 'List actors with type, transform, collision, and spawn flag.', parameters: obj },
+  { name: 'listActors', description: 'List actors with type, transform, collision, components, and spawn flag.', parameters: obj },
+  { name: 'listComponents', description: 'List components on an actor or a blueprint.', parameters: { type: 'object', properties: { id: { type: 'string' } }, required: ['id'] } },
+  { name: 'addComponent', description: 'Add a component to an actor or blueprint. type is mesh, collision, material, behaviour, brain, or voice. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, component: { type: 'object' } }, required: ['id', 'component'] } },
+  { name: 'removeComponent', description: 'Remove one component by id. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, componentId: { type: 'string' } }, required: ['id', 'componentId'] } },
+  { name: 'setComponent', description: 'Edit one component. Behaviour kinds are wander, patrol, follow, face, and idle. One undo step.', parameters: { type: 'object', properties: { id: { type: 'string' }, componentId: { type: 'string' }, patch: { type: 'object' } }, required: ['id', 'componentId', 'patch'] } },
   { name: 'runPlay', description: 'Start Play mode. Scripts run until stopPlay.', parameters: obj },
   { name: 'stopPlay', description: 'Stop Play mode and restore transforms.', parameters: obj },
   { name: 'newProject', description: 'Start a new empty project. Asks first. One undo step.', parameters: { type: 'object', properties: { name: { type: 'string' } } } },
@@ -261,6 +265,22 @@ export async function runTool(ctx, name, args = {}) {
     if (name === 'listActors') {
       const list = actions.listActors?.() || [];
       return { ok: true, summary: summary(`listed ${list.length} actor(s)`), text: JSON.stringify(list) };
+    }
+    if (name === 'listComponents') {
+      const r = actions.listComponents?.(args.id) || { ok: false, error: 'No component API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `listed ${(r.components || []).length} component(s)` : (r.error || 'no components')), text: JSON.stringify(r) };
+    }
+    if (name === 'addComponent') {
+      const r = actions.addComponent?.(args.id, args.component || {}) || { ok: false, error: 'No component API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `added ${r.component?.type || 'component'}` : (r.error || 'could not add')), text: JSON.stringify(r) };
+    }
+    if (name === 'removeComponent') {
+      const r = actions.removeComponent?.(args.id, args.componentId) || { ok: false, error: 'No component API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `removed ${args.componentId}` : (r.error || 'could not remove')), text: JSON.stringify(r) };
+    }
+    if (name === 'setComponent') {
+      const r = actions.setComponent?.(args.id, args.componentId, args.patch || {}) || { ok: false, error: 'No component API' };
+      return { ok: !!r.ok, summary: summary(r.ok ? `edited ${args.componentId}` : (r.error || 'could not edit')), text: JSON.stringify(r) };
     }
     if (name === 'runPlay') {
       const r = await actions.runPlay?.() || { ok: false, error: 'Play is not ready' };

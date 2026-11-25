@@ -1,3 +1,13 @@
+# Actor components
+
+Actors and blueprints can carry components: mesh, collision, material, behaviour, AI brain, and voice. They are saved in the `.mfproj` (`scene.json` for actors, `scripts.json` for blueprints) and edited from the Actor panel or from `MeshForge.listComponents`, `addComponent`, `removeComponent`, and `setComponent`. Behaviours are data (wander, patrol, follow, face target, idle) and run during Play. The brain may drive its own actor during Play only through a whitelist of actor commands and the existing AI Agent providers. It cannot run arbitrary code. Voice uses the Web Speech API, is off by default, and sends `onHear` / `onSpeak` to scripts.
+
+`MeshForge.bus` (`on` / `emit`) is the in-page event bus. Programmable materials no longer call the AI plugin URL themselves. They emit `ai:material`. The plugin listens. A material component emits `component:material`, so a state name such as an emotion can switch a face material.
+
+The cloud runner no longer returns a demo mesh when `MESHFORGE_CLOUD` is unset. It raises a clear error. `MESHFORGE_CLOUD=mock` is the explicit test flag that still returns the demo mesh.
+
+Animation timeline, armature fitter, companion drone, and shooter or kiosk startup are not in this change.
+
 # Script editor fixes
 
 Opening a `.mfproj` restores separate actors, transforms, materials, collision, and scripts. It no longer merges the level into one rescaled mesh. `MeshForge.openProject(bytes|url)` does that open. Scripts, including the level script, are stored on a stable actor id (`level` for the scene).

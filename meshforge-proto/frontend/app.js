@@ -17,6 +17,8 @@ import { createRecover } from './recover.js';
 import { readDropId, assetById, objectFromAsset, importFile, mountBrowser } from './content.js';
 import { buildTestHead } from './testhead.js';
 import { geometryFromHead } from './progdraw.js';
+import { createBus } from './bus.js';
+import { publicComponents } from './components.js';
 import { applyMaterialEvent, createProgramActions } from './progmat.js';
 import { initPlugins } from './plugins.js';
 import { installGameplay } from './gameplay.js';
@@ -428,8 +430,10 @@ window.__meshforge = { newSphere, get sculpt() { return sculpt; }, loadGLB, show
 
 // ---------- v5.1 public integration API (additive; see docs/integration.md) ----------
 // MeshForge.loadGLB(url | Blob | File | ArrayBuffer) -> Promise<THREE.Object3D>; exportGLB() -> Promise<Blob>
+const meshBus = createBus();
 window.MeshForge = {
   version: '8.0',
+  bus: meshBus,
   loadGLB(src) {
     let url = src, revoke = false;
     if (src instanceof ArrayBuffer) src = new Blob([src], { type: 'model/gltf-binary' });
@@ -820,7 +824,7 @@ function withMaterials(m) { m.generator = 'MeshForge 8.0'; m.materials = mats.li
   m.objects.forEach((o) => { const x = sceneObjects().find((y) => y.userData.sceneId === o.id); if (x?.userData.mf) { o.materials = x.userData.mf.slots.slice(); if (x.userData.mf.tex) o.texture = { ...x.userData.mf.tex }; } window.__mfStampObject?.(o, x); });
   if (model?.userData?.isScene) {
     markLevel(model);
-    m.level = { id: model.userData.sceneId, name: model.name || 'Scene', type: 'level', actor: model.userData.actor || { type: 'level' }, script: model.userData.scriptSource || '' };
+    m.level = { id: model.userData.sceneId, name: model.name || 'Scene', type: 'level', actor: model.userData.actor || { type: 'level' }, script: model.userData.scriptSource || '', components: publicComponents(model.userData.components) };
   }
   return m; }
 window.MeshForge.exportScene = () => withMaterials(_exportScene());
@@ -1149,24 +1153,29 @@ const programActions = createProgramActions({
   active: () => mats.byId(mats.activeId),
   now: () => mats.clockNow(),
   session: () => window.MeshForge.agentSession,
-  post: async (body) => {
-    const session = window.MeshForge.agentSession;
-    const res = await fetch('/api/plugins/ai-agent/material', { method: 'POST', headers: { ...(session?.headers?.() || {}), 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
-    return res.json();
-  },
+  bus: meshBus,
 });
 Object.assign(agentActions, programActions);
 const materialListeners = new Set();
+function applyNamedMaterialEvent(name, data) {
+  const now = mats.clockNow();
+  for (const def of mats.lib) if (def.kind === 'program') applyMaterialEvent(def, name, data, now);
+  for (const fn of materialListeners) fn(name, data);
+}
+meshBus.on('material:event', (payload) => { if (payload) applyNamedMaterialEvent(payload.name, payload.data); });
+meshBus.on('component:material', (msg) => {
+  if (!msg) return;
+  try {
+    if (msg.materialId && msg.actorId) window.MeshForge.materials?.assign?.(msg.actorId, msg.materialId);
+    if (msg.state) programActions.setMaterialState(msg.actorId || msg.materialId, msg.state, { blendMs: msg.blendMs || 0, slot: msg.slot });
+  } catch { /* a missing material stays a data reference until it exists */ }
+});
 Object.assign(window.MeshForge, programActions, {
   undo: () => editor.undo(), redo: () => editor.redo(),
   addTestHead: () => addTestHead().userData.sceneId,
   materialEvents: {
     on(fn) { materialListeners.add(fn); return () => materialListeners.delete(fn); },
-    emit(name, data) {
-      const now = mats.clockNow();
-      for (const def of mats.lib) if (def.kind === 'program') applyMaterialEvent(def, name, data, now);
-      for (const fn of materialListeners) fn(name, data);
-    },
+    emit(name, data) { meshBus.emit('material:event', { name, data }); },
   },
   autosaveNow: (reason) => recover.write(reason || 'manual'),
   groupSelection: () => doGroup(selectionMeshes()),
@@ -1196,6 +1205,7 @@ window.__mfLoadScripts = playHost.api.loadScriptLibrary;
 window.__mfStampObject = (entry, node) => {
   if (!entry || !node) return;
   if (node.userData.actor) entry.actor = node.userData.actor;
+  if (Array.isArray(node.userData.components)) entry.components = publicComponents(node.userData.components);
   if (node.userData.scriptSource) entry.script = node.userData.scriptSource;
   const mesh = node.isMesh ? node : node.children?.find((child) => child.isMesh);
   if (mesh?.userData?.collision) entry.collision = JSON.parse(JSON.stringify(mesh.userData.collision));

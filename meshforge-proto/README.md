@@ -34,7 +34,8 @@ PYTHON=python3.11 ./run.sh --setup && ./run.sh
 No NVIDIA GPU? `run.sh` installs CPU wheels; a generation then takes ~25–45 s and ~3 GB RAM.
 
 ## Cloud GPU (optional - costs money)
-- `MESHFORGE_CLOUD=mock ./run.sh` (default): demo adapter, free, returns a sample 3-part mesh.
+- Leave `MESHFORGE_CLOUD` unset and the cloud runner stops with an error. It does not invent a mesh.
+- `MESHFORGE_CLOUD=mock ./run.sh`: explicit test flag. Demo adapter, free, returns a sample 3-part mesh.
 - **Modal (coded, UNTESTED):** `pip install modal && modal token new && modal deploy cloud/modal_app.py`, then `MESHFORGE_CLOUD=modal ./run.sh`. Credentials only via `modal token new` or `MODAL_TOKEN_ID`/`MODAL_TOKEN_SECRET`; nothing is stored by MeshForge.
 - **Your own GPU box:** run MeshForge there, then locally `ssh -L 9000:127.0.0.1:8000 user@gpu-host` and `MESHFORGE_CLOUD=remote MESHFORGE_REMOTE_URL=http://127.0.0.1:9000 ./run.sh`. Never expose the port publicly.
 
